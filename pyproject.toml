@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bengali-jazz-engine"
+version = "0.1.0"
+description = "Turn a Bengali song into an instrumental jazz reinterpretation - stem separation, melody extraction, chord recognition, jazz reharmonization, and rendering, chained into one pipeline."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+
+dependencies = [
+    "demucs",
+    "basic-pitch",
+    "music21",
+    "pretty_midi",
+    "librosa",
+    "numpy<2",
+    "scipy",
+    "pydub",
+    "matchering",
+    "mido",
+    "pedalboard",
+    "openai-whisper",
+    "setuptools<81",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+bengali-jazz-engine = "bengali_jazz_engine.run_pipeline:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

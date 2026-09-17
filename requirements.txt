@@ -1,0 +1,12 @@
+demucs
+basic-pitch
+music21
+pretty_midi
+librosa
+numpy
+scipy
+pydub
+matchering
+mido
+pedalboard
+openai-whisper

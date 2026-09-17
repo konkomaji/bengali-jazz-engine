@@ -1,0 +1,30 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+pytest-report.xml
+
+# Pipeline data - generated per-run or user-supplied, not source
+input/*
+!input/.gitkeep
+stems/
+analysis/
+midi/
+render/
+mix/
+reference/*
+!reference/.gitkeep
+
+# Large third-party binaries - documented in README, not vendored
+tools/
+soundfonts/*
+!soundfonts/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
