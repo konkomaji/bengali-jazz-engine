@@ -5,6 +5,7 @@
     arrange   stage 5 only
     render    stage 8 only        mix   stage 9 only        master   stage 10 only (needs --reference)
     mood      set / show the human mood sign-off for a song
+    rate      listening tests: prepare candidate arrangements, record which you prefer
     vst       list / inspect plugins, check the role -> backend map
     corpus    refit the jazz statistics / fitness weights
     doctor    check the environment (dependencies, external tools, data files)
@@ -27,7 +28,7 @@ from pathlib import Path
 from . import __version__, pipeline
 from . import config as cfg
 
-COMMANDS = ("run", "analyze", "arrange", "render", "mix", "master", "mood", "vst", "corpus", "doctor",
+COMMANDS = ("run", "analyze", "arrange", "render", "mix", "master", "mood", "rate", "vst", "corpus", "doctor",
             "info", "clean", "lyrics")
 QUALITIES = tuple(cfg.QUALITY_PRESETS)
 LEADS = ("piano", "tenor_sax", "alto_sax", "soprano_sax")
@@ -126,6 +127,21 @@ def build_parser():
     m.add_parser("show", help="show the saved mood").add_argument("--song")
     m.add_parser("list", help="list the allowed mood keywords")
 
+    p = sub.add_parser("rate", help="listening tests: candidate arrangements and pairwise preferences")
+    t = p.add_subparsers(dest="rate_cmd", metavar="<action>")
+    s = t.add_parser("prepare", help="generate candidate arrangements of a song (needs a finished analysis)")
+    s.add_argument("--song", help="song name (default: the file in input/)")
+    s.add_argument("--n", type=int, default=4, help="number of candidates (default 4)")
+    s.add_argument("--render", action="store_true", help="also render each candidate to a wav to listen to")
+    s.add_argument("--seed", type=int)
+    s = t.add_parser("add", help="record a preference: candidate A vs candidate B")
+    s.add_argument("a", type=int)
+    s.add_argument("b", type=int)
+    s.add_argument("winner", choices=("a", "b", "tie"), help="which one you preferred")
+    s.add_argument("--song")
+    s.add_argument("--note", default="")
+    t.add_parser("status", help="how many ratings are recorded")
+
     p = sub.add_parser("vst", help="plugin discovery and the role -> backend map")
     v = p.add_subparsers(dest="vst_cmd", metavar="<action>")
     v.add_parser("list", help="list installed VST3 plugins")
@@ -138,6 +154,11 @@ def build_parser():
     c = p.add_subparsers(dest="corpus_cmd", metavar="<action>")
     c.add_parser("fit-stats", help="refit data/empirical.json").add_argument("--download", action="store_true")
     c.add_parser("fit-weights", help="refit the harmony fitness weights")
+    fr = c.add_parser("fit-ratings", help="fit the fitness weights from recorded listener ratings")
+    fr.add_argument("--min", type=int, default=30, help="minimum number of ratings (default 30)")
+    fr.add_argument("--force", action="store_true", help="fit even with fewer ratings")
+    c.add_parser("fit-jtd", help="fit rhythm-section statistics from the Jazz Trio Database annotations").add_argument(
+        "--download", action="store_true")
 
     d = sub.add_parser("doctor", help="check dependencies, external tools and data files")
     d.add_argument("--json", action="store_true")
@@ -199,6 +220,21 @@ def cmd_mood(args):
     raise ValueError("mood needs an action: set | show | list")
 
 
+def cmd_rate(args):
+    from . import rate
+
+    if args.rate_cmd == "status":
+        info = rate.status()
+        print(f"{info['ratings']} ratings ({info['decisive']} decisive) from {len(info['songs'])} song(s) in {info['file']}")
+        return info
+    if args.rate_cmd in ("prepare", "add"):
+        cfg.use_song(args.song or cfg.find_input_audio().stem)
+        if args.rate_cmd == "prepare":
+            return {"candidates": rate.prepare(args.n, args.render, args.seed)}
+        return {"recorded": rate.add(args.a, args.b, args.winner, args.note)}
+    raise ValueError("rate needs an action: prepare | add | status")
+
+
 def cmd_vst(args):
     from .render import vst
 
@@ -236,7 +272,16 @@ def cmd_corpus(args):
 
         fit_weights.run()
         return {"wrote": str(cfg.PACKAGE_DATA / "fitted_weights.json")}
-    raise ValueError("corpus needs an action: fit-stats | fit-weights")
+    if args.corpus_cmd == "fit-ratings":
+        from .corpus import ratings
+
+        return {"fit": ratings.run(min_ratings=args.min, force=args.force)}
+    if args.corpus_cmd == "fit-jtd":
+        from .corpus import fit_jtd
+
+        fit_jtd.run(do_download=args.download)
+        return {"wrote": str(cfg.PACKAGE_DATA / "jtd.json")}
+    raise ValueError("corpus needs an action: fit-stats | fit-weights | fit-jtd | fit-ratings")
 
 
 def _has(module):
@@ -376,7 +421,7 @@ def cmd_lyrics(args):
 
 
 DISPATCH = {"run": cmd_pipeline, "analyze": cmd_pipeline, "arrange": cmd_pipeline, "render": cmd_pipeline,
-            "mix": cmd_pipeline, "master": cmd_pipeline, "mood": cmd_mood, "vst": cmd_vst, "corpus": cmd_corpus,
+            "mix": cmd_pipeline, "master": cmd_pipeline, "mood": cmd_mood, "rate": cmd_rate, "vst": cmd_vst, "corpus": cmd_corpus,
             "doctor": cmd_doctor, "info": cmd_info, "clean": cmd_clean, "lyrics": cmd_lyrics}
 
 

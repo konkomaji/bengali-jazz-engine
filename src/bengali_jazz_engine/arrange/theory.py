@@ -62,6 +62,45 @@ def _load_empirical():
 
 EMPIRICAL = _load_empirical()
 
+# ---- rhythm-section statistics (corpus/fit_jtd.py: Jazz Trio Database, 1204 4/4 performances) ----
+
+_JTD_PATH = Path(os.environ.get("BENGALI_JAZZ_JTD", PACKAGE_DATA / "jtd.json"))
+
+
+def _load_jtd():
+    try:
+        return json.loads(_JTD_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+JTD = _load_jtd()
+
+
+def _jtd_bin(bpm):
+    """The JTD tempo bin containing `bpm`, else the nearest one (the corpus has no tunes below ~90 bpm)."""
+    bins = sorted((int(k.split("-")[0]), int(k.split("-")[1]), k) for k in JTD["by_tempo"])
+    for lo, hi, key in bins:
+        if lo <= bpm < hi:
+            return key
+    return min(bins, key=lambda b: min(abs(bpm - b[0]), abs(bpm - b[1])))[2]
+
+
+def bass_count_probs(bpm):
+    """P(bass onsets in a 4/4 bar = 0..8+) for this tempo from the Jazz Trio Database, or None without data."""
+    if not JTD or not JTD.get("by_tempo"):
+        return None
+    entry = JTD["by_tempo"][_jtd_bin(bpm)].get("bass")
+    return entry["count_probability"] if entry else None
+
+
+def rhythm_lag(role):
+    """Median onset lag (seconds) of piano / bass / drums against the mixed beat (JTD; the data resolution is 10 ms)."""
+    if not JTD:
+        return 0.0
+    per = [v["median"] for v in JTD["asynchrony_ms"].get(role, {}).values() if v]
+    return sum(per) / len(per) / 1000.0 if per else 0.0
+
 
 def note_cost(interval, quality):
     """Cost of a melody note `interval` semitones above the chord root.

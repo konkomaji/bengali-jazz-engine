@@ -31,10 +31,11 @@ stage range can be re-run alone.
 
 | Module | Role |
 |---|---|
-| `cli.py`, `__main__.py` | argparse CLI: `run analyze arrange render mix master mood vst corpus doctor info clean lyrics`; JSON output, quiet / verbose, exit codes 0 / 1 / 2 |
+| `cli.py`, `__main__.py` | argparse CLI: `run analyze arrange render mix master mood rate vst corpus doctor info clean lyrics`; JSON output, quiet / verbose, exit codes 0 / 1 / 2 |
 | `pipeline.py` | `RunOptions`, stage order and ranges (`select_steps`), per-song runs, `--all` batches, output collection and `manifest.json` |
 | `config.py` | workspace paths (`set_root`, `use_song`, `ensure_dirs`), settings and quality presets, device resolution, seeded RNG (`rng(stage)`), input discovery, the hash-keyed stage cache with per-key snapshots |
 | `mood.py` | per-song mood sign-off (`work/<song>/analysis/mood.json`, carries the song name) |
+| `rate.py` | listening tests: candidate arrangements of a song from different genomes (optionally rendered), pairwise preferences appended to `data/ratings.jsonl` |
 | `analysis/separate.py` | Demucs stems (subprocess; model, shifts and device from config), cached |
 | `analysis/melody.py` | pYIN melody (`pyin_parallel`), tuning correction, octave fixes -> `melody_raw_expressive.mid`, cached with a snapshot |
 | `analysis/chords.py` | beat_this grid, regularisation, meter and tempo overrides, chroma + Viterbi chords, key, per-bar energy; cache key includes the melody |
@@ -49,6 +50,8 @@ stage range can be re-run alone.
 | `render/mix.py` | per-stem EQ / reverb / pan / gain (threads), bus compressor + limiter, fades |
 | `render/master.py` | matchering |
 | `corpus/fit_stats.py`, `corpus/fit_weights.py` | offline: fit `empirical.json` and `fitted_weights.json` from WJazzD + iReal charts |
+| `corpus/fit_jtd.py` | offline: rhythm-section statistics (bass onsets per bar, pianist lag) from the Jazz Trio Database annotations -> `jtd.json` |
+| `corpus/ratings.py` | pairwise-preference (Bradley-Terry) fit of all eight fitness weights from recorded ratings -> `rated_weights.json` |
 | `data/*.json` | shipped derived statistics (package data) |
 
 Modules use package-relative imports and read paths through `from .. import config as cfg` at call time, so
@@ -184,11 +187,22 @@ Arranger
 * `offbeat_share` of the sax lead can be high (~0.75) against a target of 0.3 - 0.5 because the vocal's timing is
   freely phrased rather than grid-locked.
 * The weights of voice-leading, faithfulness, dynamics, texture and interest are hand-set; fitting them needs
-  listener ratings or a corpus of real arrangements, which do not exist here.
+  listener ratings, which do not exist here. `rate` + `corpus fit-ratings` are the tooling for it; the arranger uses
+  `rated_weights.json` once it exists.
 
 Rendering
 * The saxophones in free sample sets are sustained loops with no true legato / growl.
 * The hosted-VST3 path is slow (real-time block rendering); prefer the `sfz` backend.
+
+Rhythm section: in 4/4 walking bass the number of bass notes per bar is sampled from the Jazz Trio Database
+distribution for the tempo (`theory.bass_count_probs`: mostly four-note bars, two-feel bars rare above ~90 bpm), and the
+comping is delayed by the pianist's median lag (`theory.rhythm_lag`, +10 ms). Slow tunes (< 90 bpm) keep the two-feel rule
+because the corpus has none. Non-4/4 bars keep the FiloBass rule.
+
+Meter: `apply_meter_and_tempo` needs a 1.6x contrast margin (instead of 1.2x) to replace the tracked meter with a multiple
+or divisor of it, after a rendered waltz (tracked 3) was re-read as 6 because chord changes on every second bar line
+inflate the contrast of the doubled meter. `tests/test_meter_audio.py` renders 4/4, 3/4 and 6/8 pieces with FluidSynth and
+checks the meter and the bar length through the real `beat_this` tracker.
 
 Fixed in this version (kept for the record): sfizz VST3 block size, mood leaking across songs, shared working
 directories in batch runs, chord cache ignoring the melody, smoothing grid ceiling, silent beat_this fallback, data

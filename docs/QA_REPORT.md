@@ -15,7 +15,7 @@ All checks passed!
 
 ```
 $ pytest -q
-171 passed
+189 passed
 ```
 
 | File | Tests | Covers |
@@ -24,7 +24,10 @@ $ pytest -q
 | `test_cli.py` | 21 | argument parsing of every option, usage errors (exit 2), runtime errors (exit 1), `--dry-run`, `--json` / `--quiet` streams, `mood`, `info`, `doctor`, `clean` (dry run, `--yes`, per song), `--workdir`, default-command handling |
 | `test_pipeline.py` | 11 | stage ranges and the master rule, option plumbing, stage order and per-song workdir with stubbed stages, `--only render` reading the band from the report, batch failure isolation, `--force`, per-song paths, quality presets, manifest |
 | `test_integration.py` | 7 | synthetic song end to end: profile -> arrange -> MIDI (ranges, monophony, timing, determinism, forced lead / band) -> render -> mix (44.1 kHz stereo, finite, length, about -1.5 dBFS peak, fades, per-bar loudness follows source energy), render cache; render tests skip without FluidSynth and a soundfont |
-| `test_arranger.py` | 21 | theory primitives, chord DP, layer builders, fitness, search / repair determinism, instrumentation decision, per-song mood |
+| `test_arranger.py` | 23 | theory primitives, chord DP, layer builders, fitness, search / repair determinism, instrumentation decision, per-song mood, Jazz Trio Database bass distribution and pianist lag |
+| `test_ratings.py` | 8 | listener-rating fit recovers a planted preference vector, ties / negative coefficients / minimum-ratings rules, candidates roundtrip (`rate prepare` / `add` / `status`), rated weights loading, CLI |
+| `test_fit_jtd.py` | 4 | Jazz Trio Database fitting on a synthetic annotation folder: bar statistics, planted asynchrony and bass counts, meter filter, outlier rejection |
+| `test_meter_audio.py` | 4 | multiple-of-meter margin rule; FluidSynth-rendered 4/4, 3/4 and 6/8 pieces through the real beat_this tracker and the bar-line check (skips without beat_this / FluidSynth) |
 | `test_chord_detection.py` | 9 | triad templates, Viterbi smoothing, tempo-octave correction, bar-grid extension |
 | `test_synthetic_audio.py` | 17 | synthetic audio through pYIN, chord estimation and melody-fit smoothing, progression building, stage cache, per-stage RNG |
 | `test_meter_and_state.py` | 6 | meter evidence, `--meter` / `--tempo-scale`, sfizz plugin-state patching |
@@ -36,11 +39,13 @@ $ pytest -q
 Every test runs in its own temporary workspace (`tests/conftest.py`), so nothing touches the real `input/`, `work/`
 or `output/` directories.
 
-A test found and fixed one real defect: `corpus/fit_weights.auc` ranked tied scores by position instead of averaging
-their ranks. Refitting after the fix gave the same weights and held-out AUC (0.929), because the data had no ties.
+Tests found and fixed two real defects: `corpus/fit_weights.auc` ranked tied scores by position instead of averaging
+their ranks (refitting gave the same weights and held-out AUC 0.929, because the data had no ties); and a rendered
+waltz was re-read as 6/4 because the doubled meter's bar-line contrast is inflated (1.33x over the tracked 3 beats
+passed the old 1.2x rule; multiples and divisors of the tracked meter now need 1.6x).
 
 The light CI environment (no pedalboard, matchering, pandas, demucs, beat_this) was simulated locally by blocking those
-imports: 168 passed, 3 skipped (the pedalboard-dependent ones).
+imports: 181 passed, 8 skipped (the ones needing pedalboard, pandas, beat_this or FluidSynth).
 
 ## Performance and equivalence checks (one 4:40 song, 4 cores, no GPU, stems cached)
 
@@ -62,7 +67,7 @@ imports: 168 passed, 3 skipped (the pedalboard-dependent ones).
   models, binaries or sample libraries that are not vendored. They were exercised by running the pipeline on three
   recordings (logs are not committed).
 * `render/master.py` and `analysis/lyrics.py` have no tests; `fit_weights.run` is only tested through its helpers.
-* Meter detection is validated on synthetic chroma only; there are no annotated real 3/4 or 6/8 recordings here.
+* Meter detection is validated on synthetic chroma and on FluidSynth-rendered pieces only; there are no annotated real 3/4 or 6/8 recordings here.
 * There is no automated musical-quality test; that judgment is made by listening.
 
 ## CI

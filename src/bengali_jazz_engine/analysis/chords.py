@@ -31,6 +31,8 @@ BASS_ROOT_WEIGHT = 0.4
 CACHE_VERSION = "chords-v6"
 PENALTY_GRID = (0.01, 0.03, 0.05, 0.08, 0.12, 0.2, 0.3, 0.45)
 MELODY_PRIOR = 0.04   # score units per unit of melody clash: a tie-breaker, never overrides the audio
+METER_MARGIN = 1.2      # contrast ratio needed to override the tracked meter with an unrelated one
+MULTIPLE_MARGIN = 1.6   # ... and with a multiple / divisor of it (3 -> 6, 4 -> 2)
 RATE_LAMBDA = 0.05   # complexity cost per chord change per bar when picking the smoothing strength
 
 # Krumhansl-Kessler key profiles
@@ -245,7 +247,10 @@ def apply_meter_and_tempo(tempo, beats, downbeats, bpb, evidence, meter=None, te
     elif not meter:
         main = {m: v for m, v in evidence.items() if m in (2, 3, 4, 6)}
         best = max(main, key=lambda m: main[m][0])
-        if best != bpb and main[best][0] >= 1.2 * main.get(bpb, (1e-9, 0))[0]:
+        # a meter that is a multiple (or divisor) of the tracked one samples a subset of the same bar lines, so its
+        # contrast is inflated (a waltz read as 6 because chords also change on every second bar line): demand more
+        margin = MULTIPLE_MARGIN if best % bpb == 0 or bpb % best == 0 else METER_MARGIN
+        if best != bpb and main[best][0] >= margin * main.get(bpb, (1e-9, 0))[0]:
             downbeats, bpb, note = beats[main[best][1]::best], best, f"auto meter {bpb}->{best} (contrast)"
     return tempo, beats, downbeats, bpb, note
 

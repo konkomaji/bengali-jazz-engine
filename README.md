@@ -37,8 +37,10 @@ run       whole pipeline (default)          analyze   stages 1-4 (stems, melody,
 arrange   stage 5 only                      render    stage 8 only
 mix       stage 9 only                      master    stage 10 only (needs --reference)
 mood      set / show / list the mood sign-off for a song
+rate      listening tests: prepare candidate arrangements, record which you prefer (feeds fit-ratings)
 vst       list plugins, inspect one, check the role -> backend map
-corpus    fit-stats / fit-weights: refit the jazz statistics and fitness weights
+corpus    fit-stats / fit-weights / fit-jtd / fit-ratings: refit the jazz statistics, fitness weights,
+          Jazz Trio Database rhythm statistics, or the weights from your listening ratings
 doctor    dependency and environment check (--json, exit 1 if a required piece is missing)
 info      workspace, songs and per-song status (--json, --song NAME)
 clean     delete --cache / --work / --stems / --output / --all (dry run unless --yes, --song NAME)
@@ -160,7 +162,20 @@ docs/                   ARCHITECTURE, EVIDENCE, QA_REPORT, TECHNICAL_PAPER, ORIG
 
 See `docs/ARCHITECTURE.md` for the data flow, on-disk contract and known problems; `docs/EVIDENCE.md` for parameter provenance; `docs/TECHNICAL_PAPER.md` for the failure-mode history (its early sections describe the first, template-based version); `docs/QA_REPORT.md` for the test and lint status.
 
-Refit the statistics: `bengali-jazz-engine corpus fit-stats --download` (raw corpora go to `data/`, output to `src/bengali_jazz_engine/data/empirical.json`) and `bengali-jazz-engine corpus fit-weights` (harmony fitness weights, held-out AUC ~0.93).
+Refit the statistics: `bengali-jazz-engine corpus fit-stats --download` (raw corpora go to `data/`, output to `src/bengali_jazz_engine/data/empirical.json`), `corpus fit-weights` (harmony fitness weights, held-out AUC ~0.93) and `corpus fit-jtd --download` (rhythm-section statistics from the annotations of the Jazz Trio Database: bass onsets per bar and the pianist's lag, which the arranger uses).
+
+### Listening tests: fit the remaining weights from your ears
+
+Five fitness weights (voice-leading, faithfulness, dynamics, texture, interest) are hand-set because no ground truth exists. To fit them from your own judgements:
+
+```bash
+bengali-jazz-engine rate prepare --song "My Song" --n 4 --render   # candidate arrangements + wavs in work/<song>/candidates/
+bengali-jazz-engine rate add 0 2 a --song "My Song"                # you preferred candidate 0 over 2 (a | b | tie)
+bengali-jazz-engine rate status
+bengali-jazz-engine corpus fit-ratings                             # needs >= 30 judgements; writes rated_weights.json
+```
+
+The fit is a Bradley-Terry / logistic regression on the differences of the eight fitness terms with cross-validated accuracy reported; the arranger uses `rated_weights.json` automatically once it exists (`BENGALI_JAZZ_RATED_WEIGHTS=0` ignores it). No ratings ship with the project.
 
 ## Better instruments: VST3, SFZ and per-role soundfonts
 
@@ -191,7 +206,7 @@ Refit the statistics: `bengali-jazz-engine corpus fit-stats --download` (raw cor
 ## Known limitations
 
 - Pitch / chord / beat detection on real audio is statistical, not exact (published benchmarks put even state-of-the-art monophonic pitch trackers around ~90% raw accuracy).
-- Meter, section and mood detection are heuristics: the meter check is validated on synthetic chroma only (no annotated real 3/4 or 6/8 recordings are available), and without a saved mood the mood is an acoustic guess. Only 2, 3, 4 and 6 beats per bar are recognised; other meters fall back to 4.
+- Meter, section and mood detection are heuristics: the meter check is validated on synthetic chroma and on FluidSynth-rendered 4/4, 3/4 and 6/8 pieces through the real beat tracker (no annotated real 3/4 or 6/8 recordings are available), and without a saved mood the mood is an acoustic guess. Only 2, 3, 4 and 6 beats per bar are recognised; other meters fall back to 4.
 - Reharmonization is rule-based search, not a trained model. Only the consonance / chord-plausibility / change-rate weights are fitted (to real vs corrupted jazz); the rest are hand-set, and the fitness saturates (voice-leading, faithfulness and interest often score 1.0), so the genome search moves the result only slightly. See `docs/EVIDENCE.md`.
 - Chord recognition is triads at bar resolution; sevenths and extensions come from the reharmonizer, not from the audio.
 - The mix is only as good as the instruments; GM saxophones are the weakest part - an SFZ / SF2 / VST3 library helps most.

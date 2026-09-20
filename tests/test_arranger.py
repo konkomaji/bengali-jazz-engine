@@ -2,6 +2,7 @@
 import itertools
 
 import numpy as np
+import pytest
 
 from bengali_jazz_engine.analysis.profile import decide_instrumentation
 from bengali_jazz_engine.arrange.arranger import (
@@ -244,3 +245,36 @@ def test_saved_mood_only_applies_to_its_own_song(tmp_path, monkeypatch):
     assert song_profile.load_saved_mood("B") is None                       # other song: ignored
     (tmp_path / "mood.json").write_text(json.dumps({"mood": "longing"}))   # legacy file, no song
     assert song_profile.load_saved_mood("A") is None
+
+
+def test_jtd_bass_statistics_shape_the_bass_line():
+    from bengali_jazz_engine.arrange import theory
+
+    assert theory.JTD is not None and theory.JTD["n_tracks"] > 1000
+    for bpm in (60, 100, 150, 220, 400):
+        probs = theory.bass_count_probs(bpm)
+        assert len(probs) == 9 and sum(probs) == pytest.approx(1.0, abs=1e-3)
+        assert probs[4] + probs[5] + probs[6] > 0.6                      # walking bars dominate at every tempo bin
+        assert probs[0] + probs[1] + probs[2] < 0.15                     # two-feel bars are rare
+    assert theory.rhythm_lag("piano") > theory.rhythm_lag("bass") - 1e-9   # the pianist sits behind the bass
+    assert 0.0 <= theory.rhythm_lag("piano") < 0.03 and theory.rhythm_lag("nobody") == 0.0
+
+
+
+def test_walking_bass_bar_lengths_follow_the_corpus_distribution():
+    import random
+
+    from bengali_jazz_engine.arrange.arranger import build_bass
+
+    melody = [(60 + (i * 5) % 12, 0.5 * i, 0.5 * i + 0.4, 80) for i in range(400)]
+    ctx = make_ctx(["C", "Am", "F", "G"] * 50, melody)                      # 200 bars, 120 bpm -> JTD bin 90-130
+    chords = [ctx.original[i] for i in range(len(ctx.windows))]
+    bass = build_bass(ctx, chords, {"bass_feel": "walk"}, random.Random(5))
+    per_bar = [0] * len(ctx.bars)
+    for n in bass.notes:
+        per_bar[min(int((n.start + 0.25) // 2.0), len(per_bar) - 1)] += 1      # a beat is 0.5 s; absorb the timing jitter
+    four = sum(c == 4 for c in per_bar) / len(per_bar)
+    sparse = sum(c <= 2 for c in per_bar) / len(per_bar)
+    assert four > 0.75 and sparse < 0.12, (four, sparse)                    # corpus: >= 4 onsets in ~90% of bars, <= 2 in ~3%
+    two = build_bass(ctx, chords, {"bass_feel": "two"}, random.Random(5))
+    assert len(two.notes) < 0.85 * len(bass.notes)                          # the explicit two-feel is sparser (approach notes stay)

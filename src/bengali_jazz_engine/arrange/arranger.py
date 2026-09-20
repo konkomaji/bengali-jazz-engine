@@ -23,6 +23,7 @@ import bisect
 import itertools
 import json
 import math
+import os
 
 import numpy as np
 import pretty_midi
@@ -34,6 +35,7 @@ from .progression import SHARP_PCS, reharmonize
 from .theory import (
     GM_PROGRAM,
     RANGES,
+    bass_count_probs,
     bass_note,
     choose_voicing,
     common_tones,
@@ -42,6 +44,7 @@ from .theory import (
     melody_cost,
     note_cost,
     parse_symbol,
+    rhythm_lag,
     soloist_offbeat_fraction,
     swing_offbeat_fraction,
     symbol,
@@ -94,6 +97,25 @@ WEIGHTS = {"consonance": HARMONY_POOL * _FITTED_SPLIT["consonance"],
            "plausibility": HARMONY_POOL * _FITTED_SPLIT["plausibility"],
            "change_rate": HARMONY_POOL * _FITTED_SPLIT["change_rate"],
            "voice_leading": 0.14, "faithfulness": 0.22, "dynamics": 0.10, "texture": 0.10, "interest": 0.08}
+
+
+def _load_rated():
+    """Weights fitted from listener ratings (`corpus fit-ratings`) replace the hand-set / corpus ones when the file
+    exists; set BENGALI_JAZZ_RATED_WEIGHTS=0 to ignore it. Returns the fit metadata or None."""
+    if os.environ.get("BENGALI_JAZZ_RATED_WEIGHTS") == "0":
+        return None
+    try:
+        data = json.loads((cfg.PACKAGE_DATA / "rated_weights.json").read_text(encoding="utf-8"))
+        rated = {k: float(v) for k, v in data["weights"].items()}
+    except (OSError, ValueError, KeyError):
+        return None
+    if set(rated) != set(WEIGHTS) or abs(sum(rated.values()) - 1.0) > 0.01:
+        return None
+    WEIGHTS.update(rated)
+    return {"n_ratings": data.get("n_ratings"), "cv_accuracy": data.get("cv_accuracy")}
+
+
+RATED = _load_rated()
 
 
 # ----------------------------------------------------------------------------
@@ -297,6 +319,7 @@ def build_comping(ctx, chords, genome, r):
     lead_is_piano = ctx.inst["lead"] == "piano" and ctx.inst["plan"] == "piano"
     top = 66 if lead_is_piano else 70
     voicings, prev, changes = [], None, []
+    lag = rhythm_lag("piano")          # JTD: the pianist sits about 10 ms behind the bass and drums
     horn = 0.75 if ctx.inst["lead"] != "piano" else 1.0
 
     def at(bar, beat):
@@ -315,7 +338,7 @@ def build_comping(ctx, chords, genome, r):
         voicings.append(v)
         roll = 0.025
         for j, p in enumerate(sorted(v)):
-            s = t + j * roll * r.uniform(0.7, 1.3) + _gauss(r, 0.006)
+            s = t + lag + j * roll * r.uniform(0.7, 1.3) + _gauss(r, 0.006)
             inst.notes.append(pretty_midi.Note(velocity=int(np.clip(vel + r.randint(-5, 5), 25, 100)),
                                                pitch=p, start=max(0.0, s), end=max(0.0, s) + dur))
 
@@ -377,12 +400,22 @@ def build_bass(ctx, chords, genome, r):
     feel = genome["bass_feel"]
     if feel == "auto":
         feel = "two" if ctx.tempo < 90 else "walk"
+    # Jazz Trio Database: the number of bass onsets in a 4/4 bar follows a tempo-dependent distribution (walking bars
+    # mostly have 4 onsets, two-feel bars <= 2 are rare at medium and up tempos); other meters keep the FiloBass rule
+    counts = bass_count_probs(ctx.tempo) if (feel == "walk" and ctx.bpb == 4) else None
+    lag = rhythm_lag("bass")
     prev_pitch = None
     for bar_i, b in enumerate(ctx.bars):
         w0 = bar_i * (2 if ctx.bpb == 4 else 1)
         bl = (b["end_sec"] - b["start_sec"]) / ctx.bpb
-        # FiloBass: ~63% of walking bars are four quarters, the rest use longer notes
-        bar_two_feel = feel == "two" or (feel == "walk" and r.random() > 0.63)
+        play = None
+        if counts:
+            n_on = r.choices(range(len(counts)), weights=counts)[0]
+            play = (0, 2) if n_on <= 2 else ((0, 2, 3) if n_on == 3 else (0, 1, 2, 3))
+            bar_two_feel = play == (0, 2)
+        else:
+            # FiloBass: ~63% of walking bars are four quarters, the rest use longer notes
+            bar_two_feel = feel == "two" or (feel == "walk" and r.random() > 0.63)
         energy = ctx.energy_at(bar_i)
         next_chord = chords[w0 + (2 if ctx.bpb == 4 else 1)] if w0 + (2 if ctx.bpb == 4 else 1) < len(chords) else chords[-1]
         for beat in range(ctx.bpb):
@@ -391,7 +424,8 @@ def build_bass(ctx, chords, genome, r):
             first_of_chord = beat == 0 or (ctx.bpb == 4 and beat == 2 and chords[w0 + 1] != chords[w0])
             last = beat == ctx.bpb - 1
             root_pc = chord[0]
-            if bar_two_feel and beat % 2 == 1 and not (last and chord != next_chord):
+            skipped = (beat not in play) if play is not None else (bar_two_feel and beat % 2 == 1)
+            if skipped and not (last and chord != next_chord):
                 continue
             if first_of_chord:
                 # FiloBass: the root is on ~68% of chord changes, else an inversion tone
@@ -415,7 +449,7 @@ def build_bass(ctx, chords, genome, r):
                     pitch += 12
             pitch = int(np.clip(pitch, 28, 52))
             prev_pitch = pitch
-            t = b["start_sec"] + beat * bl + _gauss(r, 0.005)
+            t = b["start_sec"] + beat * bl + lag + _gauss(r, 0.005)
             length = bl * (1.9 if bar_two_feel and beat + 2 <= ctx.bpb else 0.92)
             vel = int(np.clip(66 + 14 * energy + r.randint(-5, 5), 40, 100))
             inst.notes.append(pretty_midi.Note(velocity=vel, pitch=pitch, start=max(0.0, t), end=max(0.0, t) + length))

@@ -139,10 +139,10 @@ No claim is made that these numbers alone establish musical quality — they est
 
 ## 7. Future work
 
-- Fit the remaining fitness terms (voice-leading, faithfulness, dynamics, texture, interest) from listener ratings or a corpus of real arrangements.
-- Replace assumption rows in `EVIDENCE.md` with measurements from the Jazz Trio Database and Filosax.
-- Per-song working directories so batch runs keep each song's analysis.
-- Validate meter detection on real recordings in 3/4 and 6/8.
+- Record listener ratings (`rate`) and fit the remaining fitness terms with `corpus fit-ratings` (tooling done, data not collected).
+- Filosax measurements for sax timing / vibrato (restricted download); comping-only statistics (Jazz Trio Database piano onsets mix soloing and comping).
+- Validate meter detection on annotated real recordings in 3/4 and 6/8 (checked so far on synthetic chroma and FluidSynth-rendered pieces).
+- Done since the first version: per-song working directories; Jazz Trio Database bass / pianist statistics.
 
 ## References
 

@@ -17,14 +17,16 @@ tune by ear.
 | Bass vs ride timing | within a few ms, no fixed lag | Published | Jazz trio timing study (PMC5706983): cymbal-bass +2.1 ms |
 | Hi-hat pedal | ~15 ms ahead of the bass | Published | same study (7-26 ms) |
 | Walking bass: root on chord changes | 68% | Published | FiloBass (arXiv 2311.02023) |
-| Walking bass: bars of four quarter notes | 63% | Published | FiloBass |
+| Walking bass: bars of four quarter notes | 63% | Published | FiloBass; only used for non-4/4 bars (see next row) |
+| Bass onsets per 4/4 bar | 90-130 bpm: 4 on 29%, 5 on 30%, 6 on 19%, <= 2 on 2.5%; 130-180: 4 on 40%, <= 2 on 3.8%; 180+: 4 on 53%, <= 2 on 7.8% (sampled per bar; 4 or more = a walking bar of 4 notes; onsets beyond 4 are not modelled) | Fitted | Jazz Trio Database v0.2, 1204 4/4 performances (automatic annotations, `data/jtd.json`). No tune below ~90 bpm is in the corpus, so slow tunes keep the two-feel rule |
+| Pianist onset lag | +10 ms vs the mixed beat (bass and drums 0 ms) | Fitted | Jazz Trio Database, ~340k matched onsets; the data resolution is 10 ms (quartiles piano 0 / +30, bass -10 / +10) |
 | Approach notes | semitone from above 26.8%, from below 21.0%, whole step from below 11.9% | Published | FiloBass (renormalised among these three) |
 | Sax vibrato rate | tenor 5.0 Hz, alto/soprano 6.0 Hz | Published (pedagogy) | Luckey via Pimentel: tenor 4.3-6, alto/soprano 5-6.7 Hz |
 | Sax vibrato depth 35 cents, onset 0.35 s | | Assumption | general instrument vibrato +-50 cents; onset unsourced |
 | Sax scoop / fall frequency, sizes | 50%, -150 / -250 cents | Assumption | no published rates found |
 | Rootless voicing shapes (type A 3-5-7-9, type B 7-9-3-5) | | Published (pedagogy) | thejazzpianosite / piano.org |
 | Voicing register 50-72 (MIDI) | | Assumption | qualitative sources give E3-G4 / C4-C5 thumb note |
-| Comping hits per bar, Charleston frequency | | Assumption | no data found; the search chooses among styles per song |
+| Comping hits per bar, Charleston frequency | | Assumption | the Jazz Trio Database piano onsets (6-9 per bar, ~47% off-beat, nearly uniform over the eight eighth slots) mix soloing with comping, so they cannot be used as comping statistics; the search chooses among styles per song |
 | Fraction of chords reharmonised | target 15-40% | Assumption | no corpus study found; tuned only by the "interest" fitness term |
 | Drum velocities, ghost-note rate (12%), feathered kick (70%) | | Assumption | qualitative sources only |
 | Sax ranges (tenor Ab2-E5, alto Db3-Ab5 concert) | | Assumption | general knowledge |
@@ -37,15 +39,22 @@ tune by ear.
 
 ## How to improve the weakest rows
 
-1. **Remaining fitness weights** (voice-leading, faithfulness, dynamics, texture, interest):
-   the harmony terms are now fitted (see above); these need listener ratings or a corpus of
-   real arrangements (not just lead sheets) to fit.
-2. **Bass / comping / drums statistics**: the Jazz Trio Database (bass and piano onsets vs
-   the beat) and Filosax (sax note-level timing, vibrato, ornaments) contain the numbers;
-   both need restricted downloads (Zenodo access request). Use their Lite/annotation
-   releases to replace the assumption rows.
-3. **Ballad swing (< 100 bpm)**: no measurements were found; the soloist fit has only 0.86
-   at slow tempi, so straight-ish is the safest default.
+1. **Remaining fitness weights** (voice-leading, faithfulness, dynamics, texture, interest): no ground truth
+   exists here. The tooling is in place: `bengali-jazz-engine rate prepare --render` makes candidate
+   arrangements of a song, `rate add A B a|b|tie` records what you prefer, and
+   `bengali-jazz-engine corpus fit-ratings` fits all eight weights by pairwise logistic regression (needs at least
+   30 judgements, reports cross-validated accuracy, writes `rated_weights.json`, which the arranger then uses).
+   Until real ratings are recorded the weights stay as listed above. The fitting maths is tested against a planted
+   preference vector, not against real listeners.
+2. **Bass / comping / drums statistics**: the Jazz Trio Database annotations are now used (bass onsets per bar, pianist
+   lag; `corpus fit-jtd --download`). Still open: comping-only statistics (JTD piano mixes solo and comping),
+   drum velocities and ghost-note rates, and all sax timing / vibrato numbers. Filosax needs a Zenodo access request
+   and cannot be downloaded without it.
+3. **Ballad swing (< 100 bpm)**: no measurements were found; the soloist fit has only 0.86 at slow tempi, so
+   straight-ish is the safest default. JTD has no tune below ~90 bpm either.
+4. **Meter**: bar-line contrast is now also checked on FluidSynth-rendered 4/4, 3/4 and 6/8 pieces through the real
+   `beat_this` tracker (`tests/test_meter_audio.py`); it found and fixed a waltz being re-read as 6/4. Annotated real
+   3/4 and 6/8 recordings (for example Bengali waltz or dadra songs with hand-marked downbeats) are still needed.
 
 ## Datasets and downloads
 
@@ -54,9 +63,9 @@ tune by ear.
 | Weimar Jazz Database | https://jazzomat.hfm-weimar.de/download/downloads/wjazzd.db | ODbL 1.0 |
 | JazzStandards (iReal-derived) | https://raw.githubusercontent.com/mikeoliphant/JazzStandards/master/JazzStandards.json | unstated; private statistics only |
 | FiloBass | https://arxiv.org/abs/2311.02023 | paper (statistics quoted) |
-| Jazz Trio Database | https://github.com/HuwCheston/Jazz-Trio-Database | annotations open |
+| Jazz Trio Database (annotations) | https://github.com/HuwCheston/Jazz-Trio-Database/releases/download/v02-zenodo/jazz-trio-database-v02.zip (24 MB) | MIT; audio is separate (Zenodo) and not used |
 | Filosax | https://github.com/dave-foster/filosax | non-commercial, restricted |
 
 The raw databases are not committed (`data/*.db`, `data/JazzStandards.json` are
 gitignored); only the small derived `src/bengali_jazz_engine/data/empirical.json` and
-`fitted_weights.json` are (they ship inside the package).
+`fitted_weights.json` and `jtd.json` are (they ship inside the package).
