@@ -1,0 +1,29 @@
+{
+ "tunes": 347,
+ "features": [
+  "consonance",
+  "plausibility",
+  "rate_dev"
+ ],
+ "coef_standardized": [
+  -2.3116,
+  -1.481,
+  0.0504
+ ],
+ "relative_importance": {
+  "consonance": 0.601,
+  "plausibility": 0.385,
+  "rate_dev": 0.013
+ },
+ "held_out_auc": 0.929,
+ "real_feature_means": {
+  "consonance": 0.6557,
+  "plausibility": 1.5517,
+  "rate_dev": 0.3638
+ },
+ "single_feature_auc": {
+  "consonance": 0.893,
+  "plausibility": 0.71,
+  "rate_dev": 0.528
+ }
+}

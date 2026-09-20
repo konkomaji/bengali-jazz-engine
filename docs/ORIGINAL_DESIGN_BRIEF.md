@@ -1,3 +1,5 @@
+> **Historical document.** This is the original design brief the project started from. It is superseded by `ARCHITECTURE.md` (current design) and does not describe the current code (for example it uses basic-pitch and a stage-per-file layout that no longer exist).
+
 # Bengali Song → Instrumental Jazz — Claude Code Pipeline (Humanized, Character-Preserving)
 
 Core problem with the previous version: a script that just quantizes melody, snaps chords to a jazz template, and fires General MIDI patterns will sound mechanical no matter how good the theory is. Jazz feel comes from micro-timing imperfection, dynamic shaping, and phrasing decisions tied to what the song is actually about. This version fixes that at every stage, and adds automatic lead-instrument selection based on the song's own character instead of a fixed choice.

@@ -28,3 +28,15 @@ soundfonts/*
 # OS
 .DS_Store
 Thumbs.db
+
+# local plugin paths
+vst.json
+
+# raw corpora (downloaded by fit_corpus --download); only data/empirical.json is committed
+data/*.db
+data/JazzStandards.json
+run.log
+output/
+
+# per-run logs
+run*.log

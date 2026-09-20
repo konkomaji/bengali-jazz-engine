@@ -13,15 +13,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import librosa
 import numpy as np
 import pretty_midi
-from config import MIDI_DIR, STEMS_DIR, find_input_audio
+from config import (
+    DEMUCS_MODEL,
+    MIDI_DIR,
+    STEMS_DIR,
+    cache_store,
+    cache_valid,
+    file_sha256,
+    find_input_audio,
+)
 from scipy.signal import medfilt
 
 MIN_NOTE_SEC = 0.08
 MAX_GAP_SEC = 0.05  # bridge tiny unvoiced blips within a sustained note
 MEDIAN_WINDOW = 7   # frames, odd - kills single-frame octave-error blips
+CACHE_VERSION = "melody-v2"
+OCTAVE_FIX_MAX_CONF = 0.75  # only "correct" notes pYIN itself was unsure about
 
 
-def fix_note_octave_errors(notes, window=5, passes=3):
+def fix_note_octave_errors(notes, window=5, passes=3, confidences=None):
     """pYIN occasionally locks onto a harmonic (2x/3x/4x freq = +12/+19/+24
     semitones) instead of the true fundamental for a note or two. Anchoring
     correction to just the previous note fails when THAT note is the error.
@@ -32,6 +42,10 @@ def fix_note_octave_errors(notes, window=5, passes=3):
     pitches = np.array([n[0] for n in notes], dtype=float)
     for _ in range(passes):
         for i in range(len(pitches)):
+            # a confidently-tracked note that jumps an octave is a real leap,
+            # not a harmonic lock - don't flatten genuine melodic contour
+            if confidences is not None and confidences[i] >= OCTAVE_FIX_MAX_CONF:
+                continue
             lo, hi = max(0, i - window), min(len(pitches), i + window + 1)
             neighborhood = np.delete(pitches[lo:hi], i - lo)
             if len(neighborhood) == 0:
@@ -43,26 +57,25 @@ def fix_note_octave_errors(notes, window=5, passes=3):
     return [(int(pitches[i]),) + notes[i][1:] for i in range(len(notes))]
 
 
-def run():
-    audio = find_input_audio()
-    vocals = STEMS_DIR / "htdemucs" / audio.stem / "vocals.wav"
-    if not vocals.exists():
-        raise FileNotFoundError(f"Missing vocals stem: {vocals} - run stage1 first")
-
-    y, sr = librosa.load(str(vocals))
-    f0, voiced_flag, _voiced_prob = librosa.pyin(
-        y, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C6"), sr=sr
-    )
+def extract_notes(y, sr):
+    """Monophonic audio -> [(midi_pitch, start, end, velocity)], octave-corrected."""
+    fmin, fmax = librosa.note_to_hz("C2"), librosa.note_to_hz("C6")
+    f0, voiced_flag, voiced_prob = librosa.pyin(y, fmin=fmin, fmax=fmax, sr=sr)
     times = librosa.times_like(f0, sr=sr)
+    hop = float(times[1] - times[0]) if len(times) > 1 else 0.0
     rms = librosa.feature.rms(y=y)[0]
     rms_times = librosa.times_like(rms, sr=sr)
 
-    midi_pitch = np.full_like(f0, np.nan)
     voiced = voiced_flag & ~np.isnan(f0)
-    midi_pitch[voiced] = librosa.hz_to_midi(f0[voiced])
+    # tuning correction: measure the recording's offset from A440 on the
+    # voiced frames, and remove it BEFORE rounding to semitones. A singer/
+    # recording 40 cents flat otherwise rounds to the wrong note.
+    tuning = float(librosa.pitch_tuning(f0[voiced])) if voiced.any() else 0.0
+    midi_pitch = np.full_like(f0, np.nan)
+    midi_pitch[voiced] = librosa.hz_to_midi(f0[voiced]) - tuning
 
     # bridge short unvoiced gaps so ornaments don't get chopped into fragments
-    gap_frames = int(MAX_GAP_SEC / (times[1] - times[0])) if len(times) > 1 else 0
+    gap_frames = int(MAX_GAP_SEC / hop) if hop else 0
     i = 0
     while i < len(voiced):
         if not voiced[i]:
@@ -76,18 +89,25 @@ def run():
         else:
             i += 1
 
-    # median filter smooths single/few-frame estimation noise without
-    # blurring real note-to-note transitions (window stays short)
+    # median-filter each contiguous voiced run separately, so smoothing never
+    # blends the end of one phrase into the start of the next
     smoothed = midi_pitch.copy()
-    voiced_idx = np.where(voiced)[0]
-    if len(voiced_idx):
-        smoothed[voiced] = medfilt(midi_pitch[voiced], kernel_size=min(MEDIAN_WINDOW, len(voiced_idx) // 2 * 2 + 1))
+    i = 0
+    while i < len(voiced):
+        if voiced[i]:
+            j = i
+            while j < len(voiced) and voiced[j]:
+                j += 1
+            k = min(MEDIAN_WINDOW, (j - i) // 2 * 2 + 1)
+            if k >= 3:
+                smoothed[i:j] = medfilt(midi_pitch[i:j], kernel_size=k)
+            i = j
+        else:
+            i += 1
     midi_pitch = smoothed
 
-    # segment into notes: group contiguous voiced frames, rounding to nearest
-    # semitone only for note identity (keeps the pipeline simple - meend/gamak
-    # as continuous pitch-bend is a further refinement, not done here)
-    notes = []
+    # segment into notes: contiguous voiced frames with the same rounded pitch
+    notes, confidences = [], []
     i = 0
     while i < len(voiced):
         if voiced[i]:
@@ -95,17 +115,36 @@ def run():
             rounded = np.round(midi_pitch[i])
             while j < len(voiced) and voiced[j] and np.round(midi_pitch[j]) == rounded:
                 j += 1
-            start, end = times[i], times[j - 1] if j - 1 < len(times) else times[-1]
+            start, end = times[i], times[j - 1] + hop  # include the last frame's duration
             if end - start >= MIN_NOTE_SEC:
                 seg_mask = (rms_times >= start) & (rms_times < end)
                 seg_rms = rms[seg_mask].mean() if seg_mask.any() else rms.mean()
                 velocity = int(np.clip(seg_rms / (rms.max() + 1e-9) * 100 + 20, 30, 120))
                 notes.append((int(rounded), float(start), float(end), velocity))
+                confidences.append(float(np.nanmean(voiced_prob[i:j])))
             i = j
         else:
             i += 1
 
-    notes = fix_note_octave_errors(notes)
+    if not notes:
+        return []
+    return fix_note_octave_errors(notes, confidences=confidences)
+
+
+def run():
+    audio = find_input_audio()
+    out = MIDI_DIR / "melody_raw_expressive.mid"
+    cache_key = f"{CACHE_VERSION}:{file_sha256(audio)}"
+    if cache_valid("melody", cache_key, [out]):
+        print(f"Cached: {out}")
+        return out
+
+    vocals = STEMS_DIR / DEMUCS_MODEL / audio.stem / "vocals.wav"
+    if not vocals.exists():
+        raise FileNotFoundError(f"Missing vocals stem: {vocals} - run stage1 first")
+
+    y, sr = librosa.load(str(vocals))
+    notes = extract_notes(y, sr)
 
     pm = pretty_midi.PrettyMIDI()
     inst = pretty_midi.Instrument(program=0)
@@ -113,9 +152,9 @@ def run():
         inst.notes.append(pretty_midi.Note(velocity=velocity, pitch=pitch, start=start, end=end))
     pm.instruments.append(inst)
 
-    out = MIDI_DIR / "melody_raw_expressive.mid"
     pm.write(str(out))
-    print(f"Wrote {out} ({len(notes)} clean monophonic notes, was 726 polyphonic-artifact notes before)")
+    cache_store("melody", cache_key)
+    print(f"Wrote {out} ({len(notes)} clean monophonic notes)")
     return out
 
 

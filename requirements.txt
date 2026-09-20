@@ -1,12 +1,13 @@
 demucs
-basic-pitch
+beat-this
 music21
 pretty_midi
 librosa
-numpy
+numpy<2
 scipy
+pandas
 pydub
 matchering
 mido
 pedalboard
-openai-whisper
+# optional: openai-whisper (stage3b lyrics transcription)

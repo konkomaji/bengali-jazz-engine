@@ -53,7 +53,7 @@ jobs:
           python-version: "3.11"
 
       # Validates that pyproject.toml's full dependency set (including the
-      # heavy ML deps - torch, tensorflow, demucs, whisper) actually
+      # heavy ML deps - torch, demucs, whisper) actually
       # resolves and the package imports cleanly. Does not run the audio
       # pipeline itself (no test audio/models fetched here).
       - name: Install package

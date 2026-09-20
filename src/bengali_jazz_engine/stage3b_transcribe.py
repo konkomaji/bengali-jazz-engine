@@ -7,12 +7,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import ANALYSIS_DIR, STEMS_DIR, find_input_audio
+from config import ANALYSIS_DIR, DEMUCS_MODEL, STEMS_DIR, find_input_audio
 
 
 def run():
     audio = find_input_audio()
-    vocals = STEMS_DIR / "htdemucs" / audio.stem / "vocals.wav"
+    vocals = STEMS_DIR / DEMUCS_MODEL / audio.stem / "vocals.wav"
     if not vocals.exists():
         raise FileNotFoundError(f"Missing vocals stem: {vocals} - run stage1 first")
 

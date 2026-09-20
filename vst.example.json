@@ -1,0 +1,10 @@
+{
+  "auto_discover": false,
+  "plugins": {
+    "piano":     { "path": "C:/Program Files/Common Files/VST3/YourPiano.vst3", "preset": null, "parameters": {} },
+    "tenor_sax": "C:/Program Files/Common Files/VST3/YourSax.vst3",
+    "alto_sax":  "C:/Program Files/Common Files/VST3/YourSax.vst3",
+    "bass":      "C:/Program Files/Common Files/VST3/YourBass.vst3",
+    "drums":     "C:/Program Files/Common Files/VST3/YourDrums.vst3"
+  }
+}

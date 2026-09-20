@@ -2,6 +2,17 @@
 
 **Author:** konkomaji
 
+> **Status note.** Sections 2-3 and 5 describe the first, template-based version of the
+> pipeline and the failures that shaped it; the measurements there are from that version.
+> The current pipeline differs: Demucs `htdemucs_ft`; `beat_this` beats and downbeats
+> (meter 2/3/4/6, `--tempo-scale`, `--meter`); chord smoothing chosen per song against the
+> vocal melody; a search-based arranger (`arranger.py`, `theory.py`) instead of a fixed
+> reharmonisation table, with corpus-fitted statistics (`EVIDENCE.md`); the instrument
+> and band chosen from the song (`song_profile.py`) instead of always solo piano; VST3 /
+> SFZ / SF2 rendering per role (`vst.py`). `ARCHITECTURE.md` is the reference for the
+> current design and `EVIDENCE.md` for parameter provenance. Sections 6 and 7 below
+> are updated to the current state.
+
 ## Abstract
 
 We describe a pipeline that converts a single Bengali song recording into an instrumental jazz reinterpretation. The system separates source stems, extracts a monophonic melody from the vocal stem, estimates a real (non-idealized) beat and chord grid from the full mixture, reharmonizes the progression under jazz-restraint heuristics, and renders a solo-piano (or optional full-band) arrangement whose comping dynamics track the original recording's energy envelope. We document the specific failure modes encountered at each stage — including several that are easy to miss until the rendered audio is actually heard — and the concrete fixes applied. We report before/after measurements for the metrics that are checkable without subjective listening (octave-jump rate, chord-change rate, inter-track timing drift), and are explicit about which parts of the system remain statistical estimates rather than exact computation.
@@ -117,19 +128,21 @@ The metrics in this section are the ones that can be checked mechanically, witho
 
 No claim is made that these numbers alone establish musical quality — they establish that the specific, previously-identified defects are gone. Whether the resulting arrangement is *good jazz* is inherently a subjective, iterative judgment, which is why this system was developed against direct listening feedback at each step rather than a single held-out benchmark.
 
-## 6. Limitations
+## 6. Limitations (current)
 
-- **Pitch, beat, and chord estimation are statistical, not exact.** Published benchmarks for monophonic pitch trackers (CREPE, pYIN) report on the order of 90–91% raw pitch accuracy on standard evaluation sets; this pipeline's melody extraction inherits that ceiling. Chord recognition, similarly, is a 24-way (major/minor triad) classification per bar with no concept of extended or borrowed harmony in the source material.
-- **Reharmonization is a fixed lookup table plus a small number of hand-written restraint heuristics**, not a model trained on real jazz arrangements. It captures the *rules* the pipeline's design follows (match density to the original, hold static phrases, reserve dense reharmonization for structural transitions) but not the *taste* a human arranger brings to when those rules should be broken.
-- **The default render path is a General MIDI soundfont**, a placeholder for an eventual real sample-library render (the codebase already exposes a `pedalboard`-based VST3 hook for this).
-- **Beat-tracking assumes 4/4 meter** throughout; the pipeline has not been tested against material in other time signatures.
+- **Pitch, beat, and chord estimation are statistical, not exact.** Melody extraction inherits the ~90% raw-accuracy ceiling of monophonic trackers; chords are 24-way major/minor triads per bar.
+- **The arranger is a rule- and corpus-driven search, not a trained model.** Only the consonance, chord-plausibility and change-rate weights are fitted (real vs corrupted jazz, held-out AUC ~0.93); the remaining weights are hand-set, and the fitness saturates, so the search changes the result only slightly.
+- **Meter support is 2, 3, 4 and 6 beats per bar**, chosen from the beat tracker and a harmonic bar-line check validated only on synthetic chroma.
+- **Sound quality depends on the configured instruments.** The default is a General MIDI soundfont; better SFZ/SF2/VST3 libraries are configured in `vst.json`.
+- **Mood** comes from `mood.json` (human/LLM sign-off) or a coarse acoustic guess.
+- See `ARCHITECTURE.md`, "Known weak points and open problems", for the itemised list.
 
 ## 7. Future work
 
-- Replace the fixed chord-voicing lookup with a model or rule set that reads the *harmonic context* (not just the current chord) before choosing extensions/substitutions.
-- Add automatic detection of song structure (verse/chorus/bridge) to place dense reharmonization specifically at section boundaries, rather than at a fixed count of V–I resolutions.
-- Wire a real sample library through the existing `pedalboard` VST3 hook and evaluate the difference against the GM-soundfont baseline.
-- Extend beat-tracking/bar-grid construction to detect and handle non-4/4 material.
+- Fit the remaining fitness terms (voice-leading, faithfulness, dynamics, texture, interest) from listener ratings or a corpus of real arrangements.
+- Replace assumption rows in `EVIDENCE.md` with measurements from the Jazz Trio Database and Filosax.
+- Per-song working directories so batch runs keep each song's analysis.
+- Validate meter detection on real recordings in 3/4 and 6/8.
 
 ## References
 

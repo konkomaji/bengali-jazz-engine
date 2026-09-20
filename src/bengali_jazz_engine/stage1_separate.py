@@ -1,24 +1,40 @@
-"""Stage 1 - stem separation via demucs."""
+"""Stage 1 - stem separation via demucs (fine-tuned htdemucs_ft by default)."""
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import STEMS_DIR, find_input_audio
+from config import (
+    DEMUCS_MODEL,
+    STEMS_DIR,
+    cache_store,
+    cache_valid,
+    file_sha256,
+    find_input_audio,
+)
+
+STEM_NAMES = ("vocals", "bass", "drums", "other")
 
 
 def run():
     audio = find_input_audio()
-    print(f"Separating stems for {audio.name}")
+    stem_dir = STEMS_DIR / DEMUCS_MODEL / audio.stem
+    stems = [stem_dir / f"{n}.wav" for n in STEM_NAMES]
+    cache_key = f"stems:{DEMUCS_MODEL}:{file_sha256(audio)}"
+    if cache_valid("stems", cache_key, stems):
+        print(f"Cached stems: {stem_dir}")
+        return stem_dir
+
+    print(f"Separating stems for {audio.name} with {DEMUCS_MODEL}")
     subprocess.run(
-        [sys.executable, "-m", "demucs", "-o", str(STEMS_DIR), str(audio)],
+        [sys.executable, "-m", "demucs", "-n", DEMUCS_MODEL, "--shifts", "1",
+         "-o", str(STEMS_DIR), str(audio)],
         check=True,
     )
-    stem_dir = STEMS_DIR / "htdemucs" / audio.stem
-    for name in ("vocals", "bass", "drums", "other"):
-        f = stem_dir / f"{name}.wav"
+    for f in stems:
         if not f.exists():
             raise FileNotFoundError(f"Expected stem missing: {f}")
+    cache_store("stems", cache_key)
     print(f"Stems written to {stem_dir}")
     return stem_dir
 

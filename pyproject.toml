@@ -12,7 +12,8 @@ license = { text = "MIT" }
 
 dependencies = [
     "demucs",
-    "basic-pitch",
+    "beat-this",
+    "pandas",
     "music21",
     "pretty_midi",
     "librosa",
@@ -22,12 +23,12 @@ dependencies = [
     "matchering",
     "mido",
     "pedalboard",
-    "openai-whisper",
     "setuptools<81",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+lyrics = ["openai-whisper"]
 
 [project.scripts]
 bengali-jazz-engine = "bengali_jazz_engine.run_pipeline:main"
