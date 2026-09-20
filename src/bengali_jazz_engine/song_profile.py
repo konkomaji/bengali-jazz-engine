@@ -16,7 +16,7 @@ import itertools
 import librosa
 import numpy as np
 import pretty_midi
-from config import ANALYSIS_DIR, MIDI_DIR
+from config import ANALYSIS_DIR, MIDI_DIR, find_input_audio
 
 SAD = {"melancholic", "longing", "nostalgic", "romantic"}
 CALM = {"devotional", "contemplative"}
@@ -148,10 +148,22 @@ def load_melody_notes(path=None):
     return sorted(((n.pitch, n.start, n.end, n.velocity) for n in pm.instruments[0].notes), key=lambda n: n[1])
 
 
+def load_saved_mood(song):
+    """Mood saved for `song` in analysis/mood.json, else None. A mood saved for another song (or
+    a legacy file with no song name) is ignored so it cannot leak into a different track."""
+    path = ANALYSIS_DIR / "mood.json"
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    if data.get("song") != song:
+        print(f"Ignoring analysis/mood.json (saved for {data.get('song')!r}, current song is {song!r})")
+        return None
+    return data.get("mood")
+
+
 def run():
     estimate = json.loads((ANALYSIS_DIR / "chord_estimate.json").read_text())
-    mood_path = ANALYSIS_DIR / "mood.json"
-    saved = json.loads(mood_path.read_text())["mood"] if mood_path.exists() else None
+    saved = load_saved_mood(find_input_audio().stem)
     profile = build_profile(estimate, load_melody_notes(), saved)
 
     (ANALYSIS_DIR / "song_profile.json").write_text(json.dumps(profile, indent=2))

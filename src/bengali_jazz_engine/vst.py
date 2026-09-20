@@ -48,6 +48,7 @@ import pretty_midi
 from config import ROOT
 
 SR = 44100
+SFIZZ_MAX_BLOCK = 1024  # sfizz's VST3 cannot allocate more per callback: larger blocks drop audio and spam warnings
 TAIL_SEC = 3.0  # let reverb / release tails ring out past the last note
 
 ROLE_KEYWORDS = {
@@ -255,6 +256,15 @@ def sfizz_state_with_sfz(raw_state, sfz_path):
     return b"VC2!" + struct.pack("<I", len(xml_bytes)) + xml_bytes + b"\x00"
 
 
+def block_size(spec):
+    """Processing block size for a VST3 spec; sfizz is capped at SFIZZ_MAX_BLOCK."""
+    size = int(spec.get("buffer_size", 2048))
+    is_sfizz = "sfz_file" in spec or "sfizz" in str(spec.get("plugin_name", "")).lower()         or "sfizz" in Path(str(spec.get("path", ""))).stem.lower()
+    if is_sfizz and "buffer_size" not in spec:
+        return SFIZZ_MAX_BLOCK
+    return min(size, SFIZZ_MAX_BLOCK) if is_sfizz else size
+
+
 def render_vst3(midi_path, wav_path, spec):
     from pedalboard import load_plugin
     from pedalboard.io import AudioFile
@@ -269,7 +279,7 @@ def render_vst3(midi_path, wav_path, spec):
         import time
 
         plugin.raw_state = sfizz_state_with_sfz(plugin.raw_state, _resolve(spec["sfz_file"]))
-        plugin([], duration=0.2, sample_rate=SR, num_channels=2, buffer_size=int(spec.get("buffer_size", 2048)))
+        plugin([], duration=0.2, sample_rate=SR, num_channels=2, buffer_size=block_size(spec))
         time.sleep(float(spec.get("load_wait_sec", 3.0)))  # sample loading happens on a worker thread
     if spec.get("state"):
         plugin.raw_state = _resolve(spec["state"]).read_bytes()
@@ -283,7 +293,7 @@ def render_vst3(midi_path, wav_path, spec):
     pm = pretty_midi.PrettyMIDI(str(midi_path))
     duration = pm.get_end_time() + float(spec.get("tail_sec", TAIL_SEC))
     audio = plugin(midi_messages(pm), duration=duration, sample_rate=SR, num_channels=2,
-                   buffer_size=int(spec.get("buffer_size", 2048)))
+                   buffer_size=block_size(spec))
     if audio.shape[0] == 1:
         audio = np.repeat(audio, 2, axis=0)
     with AudioFile(str(wav_path), "w", SR, audio.shape[0]) as f:

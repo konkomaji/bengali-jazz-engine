@@ -42,7 +42,7 @@ input/song.mp3
 | `stage9_mix.py` | per-stem EQ / reverb / pan / gain, bus compressor + limiter, fades -> `mix/rough_mix.wav` |
 | `stage10_master.py` | optional matchering against `--reference` |
 | `fit_corpus.py`, `fit_weights.py` | offline: fit `data/empirical.json` and `data/fitted_weights.json` from WJazzD + iReal charts |
-| `stage3b_transcribe.py`, `save_mood.py` | manual side tools: Whisper lyrics; write `analysis/mood.json` |
+| `stage3b_transcribe.py`, `save_mood.py` | manual side tools: Whisper lyrics; write `analysis/mood.json` (with the song name) |
 
 Modules import each other by bare name (`import config`, `from theory import ...`) after a
 `sys.path` insert, so they run both as `python -m bengali_jazz_engine.<module>` and as the
@@ -174,15 +174,15 @@ Arranger
   fallback tables. `theory.transition_cost` would raise `KeyError` on a partial table.
 
 Rendering / mixing
-* sfizz VST3 with `buffer_size` 2048 floods the log with `[sfizz] Could not get a temporary
-  buffer` (its limit is 1024 frames). The rendered lead still contained audio for every long
-  note in the checked run, but use <= 1024 or the offline `sfz` backend.
+* Fixed: the sfizz VST3 cannot process blocks above 1024 frames (2048 flooded the log with
+  `[sfizz] Could not get a temporary buffer`), so `vst.block_size` now caps sfizz entries at 1024.
 * `sfizz_render` / `fluidsynth` failures are reported with stderr captured, so the
   fallback warning shows only the exit status.
 * The saxophones in free sample sets are sustained loops with no true legato / growl.
 
 Project state
-* Working files in `analysis/`, `midi/`, `render/`, `mix/` and `analysis/mood.json` are shared
-  by all songs; `--all` processes songs one by one and overwrites them.
+* Working files in `analysis/`, `midi/`, `render/`, `mix/` are shared by all songs; `--all`
+  processes songs one by one and overwrites them. `analysis/mood.json` records the song it was
+  saved for and is ignored for any other song (fixed).
 * The fitness weights outside the three fitted harmony terms are not fitted to listener
   ratings (see `EVIDENCE.md`).

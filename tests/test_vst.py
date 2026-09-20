@@ -99,3 +99,11 @@ def test_render_role_reports_sfz_and_sf2_backends_without_falling_back(tmp_path,
     monkeypatch.setattr(s8, "fluidsynth_render", lambda m, w: fell_back.append(1))
     s8.render_role(tmp_path / "a.mid", tmp_path / "a.wav", "tenor_sax")
     assert not fell_back and "SFZ (sfizz) Sax.sfz" in capsys.readouterr().out
+
+
+def test_sfizz_block_size_is_capped_at_1024():
+    assert vst.block_size({"path": "C:/x/sfizz.vst3", "sfz_file": "a.sfz"}) == 1024
+    assert vst.block_size({"path": "C:/x/sfizz.vst3", "sfz_file": "a.sfz", "buffer_size": 2048}) == 1024
+    assert vst.block_size({"path": "C:/x/sfizz.vst3", "buffer_size": 512}) == 512
+    assert vst.block_size({"path": "C:/x/Other.vst3"}) == 2048
+    assert vst.block_size({"path": "C:/x/Other.vst3", "buffer_size": 4096}) == 4096

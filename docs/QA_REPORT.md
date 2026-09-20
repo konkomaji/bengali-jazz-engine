@@ -15,18 +15,18 @@ All checks passed!
 
 ```
 $ pytest -q
-68 passed
+70 passed
 ```
 
 | File | Tests | Covers |
 |---|---|---|
 | `tests/test_chord_detection.py` | 9 | triad templates, Viterbi smoothing, tempo-octave correction, bar-grid extension |
 | `tests/test_octave_correction.py` | 4 | local-median octave fixing of the pYIN melody |
-| `tests/test_arranger.py` | 20 | theory primitives, chord DP, layer builders, fitness, search / repair determinism, instrumentation decision |
+| `tests/test_arranger.py` | 21 | theory primitives, chord DP, layer builders, fitness, search / repair determinism, instrumentation decision, per-song mood |
 | `tests/test_fit_corpus.py` | 4 | WJazzD / iReal chord-symbol parsing and quality mapping |
 | `tests/test_meter_and_state.py` | 6 | meter evidence, `--meter` / `--tempo-scale` handling, sfizz plugin-state patching (JUCE base64) |
 | `tests/test_synthetic_audio.py` | 17 | synthetic audio through pYIN, chord estimation and melody-fit smoothing, progression building, stage cache, per-stage RNG |
-| `tests/test_vst.py` | 8 | `vst.json` parsing, plugin discovery / resolution, MIDI -> message conversion |
+| `tests/test_vst.py` | 9 | `vst.json` parsing, plugin discovery / resolution, MIDI -> message conversion, sfizz block-size cap |
 
 ## Not covered by automated tests
 

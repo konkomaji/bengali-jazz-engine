@@ -55,7 +55,7 @@ bengali-jazz-engine --meter 3                                 # force beats per 
 bengali-jazz-engine --tempo-scale 0.5                         # the song is felt at half the tracked tempo (slow ballad)
 ```
 
-Stem separation, melody and chord analysis are cached (`analysis/.cache.json`, keyed by the file's SHA-256 plus `--meter` / `--tempo-scale`), so re-running only redoes the (fast) arrangement stages. Intermediate files (`analysis/`, `midi/`, `render/`, `mix/`) are shared between songs, so with `--all` each song overwrites the previous one's working files; only `output/<song>/` and the stems are kept per song. Stem quality: `htdemucs_ft` by default (`BENGALI_JAZZ_DEMUCS_MODEL=htdemucs` for a faster model).
+Stem separation, melody and chord analysis are cached (`analysis/.cache.json`, keyed by the file's SHA-256 plus `--meter` / `--tempo-scale`), so re-running only redoes the (fast) arrangement stages. Intermediate files (`analysis/`, `midi/`, `render/`, `mix/`) are shared between songs (only the mood is per song), so with `--all` each song overwrites the previous one's working files; only `output/<song>/` and the stems are kept per song. Stem quality: `htdemucs_ft` by default (`BENGALI_JAZZ_DEMUCS_MODEL=htdemucs` for a faster model).
 
 Environment variables: `BENGALI_JAZZ_ROOT` (repo/data root), `BENGALI_JAZZ_SEED`, `BENGALI_JAZZ_METER`, `BENGALI_JAZZ_TEMPO_SCALE`, `BENGALI_JAZZ_INPUT`, `BENGALI_JAZZ_SOUNDFONT`, `BENGALI_JAZZ_DEMUCS_MODEL`, `BENGALI_JAZZ_VST_CONFIG`, `BENGALI_JAZZ_VST_DIRS`, `BENGALI_JAZZ_EMPIRICAL`.
 
@@ -63,10 +63,10 @@ Slow ballads: beat trackers often lock onto double density. If the reported temp
 
 ### Mood sign-off (optional, improves instrument/reharm judgment calls)
 
-Lyrics-and-context mood detection needs a human (or an LLM assistant) in the loop — it's not scriptable. If you skip it, the pipeline falls back to acoustic-only heuristics automatically. `analysis/mood.json` is shared by every song in `analysis/`, so delete it (or re-save) when you switch songs. To supply it:
+Lyrics-and-context mood detection needs a human (or an LLM assistant) in the loop — it's not scriptable. If you skip it, the pipeline falls back to acoustic-only heuristics automatically. The mood is saved together with the song's name and only applied to that song (a mood saved for another song is ignored). To supply it:
 
 ```bash
-python -m bengali_jazz_engine.save_mood <mood_keyword> "<why>"
+python -m bengali_jazz_engine.save_mood <mood_keyword> "<why>" [song_name]   # song defaults to the file in input/
 ```
 
 Mood keywords: `devotional`, `contemplative`, `melancholic`, `romantic`, `longing`, `nostalgic`, `patriotic`, `defiant`, `playful`, `upbeat`.
@@ -127,7 +127,7 @@ mapped, or that fails to load, falls back to the GM soundfont with a warning.
   VST3); the reliable route for SFZ libraries from Python.
 * **SF2** (`sf2`, optional `program`): FluidSynth with a soundfont just for that role.
 
-A `path` entry pointing at `sfizz.vst3` with `"plugin_name": "sfizz"` and `"sfz_file": "...sfz"` builds the plugin state that loads that SFZ (no DAW needed). The sfizz VST3 handles at most 1024 frames per callback: with `buffer_size` 2048 it logs thousands of `[sfizz] Could not get a temporary buffer` warnings, so use `buffer_size` 1024 or fewer, or prefer the offline `sfz` backend.
+A `path` entry pointing at `sfizz.vst3` with `"plugin_name": "sfizz"` and `"sfz_file": "...sfz"` builds the plugin state that loads that SFZ (no DAW needed). The sfizz VST3 handles at most 1024 frames per callback, so the engine caps its `buffer_size` at 1024 (the default for sfizz entries); larger values used to log thousands of `[sfizz] Could not get a temporary buffer` warnings.
 
 `python -m bengali_jazz_engine.vst --list` shows installed VST3 plugins and
 `--inspect PATH [--plugin-name NAME]` shows whether one is an instrument. The sfizz VST3

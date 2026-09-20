@@ -8,7 +8,7 @@ chord analysis are cached per input file, so a re-run only redoes the arrangemen
 render and mix stages.
 
 Mood detection (lyrics + web context) needs a human/LLM in the loop and cannot be
-scripted: if analysis/mood.json exists (written by save_mood.py) it is used, otherwise
+scripted: if analysis/mood.json exists for this song (written by save_mood.py) it is used, otherwise
 the profile falls back to an acoustic guess automatically.
 
 Mastering (stage 10) only runs if --reference is given; otherwise the pipeline stops

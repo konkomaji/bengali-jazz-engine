@@ -222,3 +222,17 @@ def test_generate_accepts_explicit_chords():
     arr = generate(ctx, g, chords=chords)
     assert arr["chords"] == chords
     set_seed(0)
+
+
+def test_saved_mood_only_applies_to_its_own_song(tmp_path, monkeypatch):
+    import json
+
+    import song_profile
+
+    monkeypatch.setattr(song_profile, "ANALYSIS_DIR", tmp_path)
+    assert song_profile.load_saved_mood("A") is None                       # no file
+    (tmp_path / "mood.json").write_text(json.dumps({"mood": "longing", "song": "A"}))
+    assert song_profile.load_saved_mood("A") == "longing"
+    assert song_profile.load_saved_mood("B") is None                       # other song: ignored
+    (tmp_path / "mood.json").write_text(json.dumps({"mood": "longing"}))   # legacy file, no song
+    assert song_profile.load_saved_mood("A") is None
