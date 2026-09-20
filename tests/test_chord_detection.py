@@ -3,7 +3,8 @@ beat-grid-coverage correction. These are the fixes behind the 65% -> 17-28%
 bar-to-bar chord-change-rate improvement documented in the technical paper.
 """
 import numpy as np
-from detect_chords import (
+
+from bengali_jazz_engine.analysis.chords import (
     extend_to_cover,
     fix_octave_error,
     triad_templates,

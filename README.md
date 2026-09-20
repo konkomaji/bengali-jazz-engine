@@ -1,138 +1,184 @@
 # BengaliJazz Engine
 
-Turn a Bengali song into an instrumental jazz reinterpretation — stem separation, monophonic melody extraction, chord recognition, jazz reharmonization, and rendering, chained into one pipeline.
+Turn a Bengali song into an instrumental jazz reinterpretation: stem separation, monophonic melody extraction, beat / chord / key analysis, a search-based jazz arranger, rendering and mixing, all behind one command line tool.
 
-The song decides the band: `song_profile.py` picks a piano, tenor-sax or alto-sax lead (or a piano/sax hybrid) and a solo or trio (piano comping, or piano + walking bass + ride/brushes) from the melody's range, density and mood. `--solo` / `--full-band` override the band decision. Results are copied to `output/<song>/`.
+The song decides the band: the profile stage picks a piano, tenor-sax or alto-sax lead (or a piano/sax hybrid) and a solo or trio (piano comping, or piano + walking bass + ride/brushes) from the melody's range, density and mood. `--solo` / `--full-band` / `--lead` override that. Results go to `output/<song>/`.
 
-## How it thinks
-
-1. **Understand** - tempo, real downbeat grid (`beat_this`), key, tuning, sections, per-bar energy, melody character (register, range, density, phrasing) and mood.
-2. **Decide the instrumentation** from that evidence: piano lead, tenor/alto sax lead, or a piano/sax hybrid; solo or trio (bass + brushes/ride). Wide-range lyrical melodies and sad/longing moods lean to sax, busy melodies to piano, register picks tenor vs alto.
-3. **Generate + score + refine** (`arranger.py`): candidate arrangements come from a small genome (reharm rate, embellishment, swing amount, behind-the-beat, comping style/density, bass feel). Chords are solved by dynamic programming over half-bar windows against the melody (chord-scale and avoid-note theory, secondary dominants, tritone subs, deviation cost from the source harmony). Each candidate is scored on melody/chord consonance, voice-leading, faithfulness, dynamics vs the source, texture, chord-change rate and harmonic interest; genomes evolve for several generations, then clashing windows are re-opened and re-solved. Every iteration is logged in `analysis/arrangement_report.json`.
-4. **Render + mix** - dry FluidSynth stems (MuseScore General soundfont by default), then per-stem EQ, reverb, pan, bus compression and limiting.
-
-Jazz rules used (swing ratio vs tempo, rootless voicings A/B with minimal motion, walking/two-feel bass, ride/brush patterns, sax vibrato/scoops/falls, approach-note embellishment) live in `theory.py` and `arranger.py`. Numeric parameters are informed defaults, and the search tunes them per song.
-
-## Requirements
-
-- Python 3.11 or 3.12 (PyTorch stack; `numpy<2`)
-- [FFmpeg](https://ffmpeg.org/) on PATH
-- [FluidSynth](https://github.com/FluidSynth/fluidsynth/releases) — either on PATH, or its binary dropped under `tools/`
-- Optional, for better tone: [sfizz](https://sfz.tools/sfizz/) (`sfizz_render` under `tools/` or on PATH, or the sfizz VST3) and an SFZ/SF2 instrument library, wired up in `vst.json` (see below)
-- A General MIDI soundfont in `soundfonts/` - `MuseScore_General.sf2` (preferred), `GeneralUser_GS.sf2` or `FluidR3_GM.sf2`, picked in that order (or set `BENGALI_JAZZ_SOUNDFONT`)
-- ~2GB disk for `openai-whisper`'s large-v3 model if you use the optional offline transcription path
-
-## Setup
+## Quick start
 
 ```bash
 git clone https://github.com/konkomaji/bengali-jazz-engine.git
 cd bengali-jazz-engine
 python -m venv venv
-venv\Scripts\activate        # source venv/bin/activate on macOS/Linux
+venv\Scripts\activate            # source venv/bin/activate on macOS/Linux
 pip install -e .
-```
-
-Then get FluidSynth and a soundfont (not vendored — see Requirements above) and place them as described.
-
-## Usage
-
-Drop an audio file (`.wav`, `.mp3`, `.flac`, `.m4a`) in `input/` (with more than one file, pass `--input FILE` or `--all`), then:
-
-```bash
+bengali-jazz-engine doctor       # checks Python packages, ffmpeg, fluidsynth, sfizz, soundfont, data files
+# put a song in input/ (.wav .mp3 .flac .m4a), then:
 bengali-jazz-engine
 ```
 
-This runs the whole pipeline and stops at `mix/rough_mix.wav`, then copies the mix, the four arrangement MIDI files and the JSON reports to `output/<song>/`. Useful flags:
+`bengali-jazz-engine` with no command is `bengali-jazz-engine run`. `bengali-jazz` and `python -m bengali_jazz_engine` are aliases.
 
-```bash
-bengali-jazz-engine --reference path/to/reference_track.wav   # also master (matchering)
-bengali-jazz-engine --full-band | --solo                      # override the band decision
-bengali-jazz-engine --input "input/My Song.mp3"              # pick one file when input/ holds several
-bengali-jazz-engine --all                                     # every file in input/, one after another (a failure does not stop the batch)
-bengali-jazz-engine --seed 7                                  # reproducible arrangement (default 0)
-bengali-jazz-engine --force                                   # ignore cached stems/melody/chords
-bengali-jazz-engine --meter 3                                 # force beats per bar (default: tracked + checked)
-bengali-jazz-engine --tempo-scale 0.5                         # the song is felt at half the tracked tempo (slow ballad)
+## Requirements
+
+- Python 3.11 or 3.12 (PyTorch stack; `numpy<2`)
+- [FFmpeg](https://ffmpeg.org/) on PATH (decoding mp3 / m4a)
+- [FluidSynth](https://github.com/FluidSynth/fluidsynth/releases): on PATH, or its binary under `tools/`
+- A General MIDI soundfont in `soundfonts/`: `MuseScore_General.sf2` (preferred), `GeneralUser_GS.sf2` or `FluidR3_GM.sf2`, picked in that order (or `BENGALI_JAZZ_SOUNDFONT`)
+- Optional, for better tone: [sfizz](https://sfz.tools/sfizz/) (`sfizz_render` on PATH or under `tools/`) and SFZ / SF2 / VST3 instruments wired up in `vst.json`
+- Optional: `pip install -e .[lyrics]` for Whisper transcription (~2 GB model)
+
+## Commands
+
+```
+bengali-jazz-engine <command> [options]
+
+run       whole pipeline (default)          analyze   stages 1-4 (stems, melody, chords, acoustic, profile)
+arrange   stage 5 only                      render    stage 8 only
+mix       stage 9 only                      master    stage 10 only (needs --reference)
+mood      set / show / list the mood sign-off for a song
+vst       list plugins, inspect one, check the role -> backend map
+corpus    fit-stats / fit-weights: refit the jazz statistics and fitness weights
+doctor    dependency and environment check (--json, exit 1 if a required piece is missing)
+info      workspace, songs and per-song status (--json, --song NAME)
+clean     delete --cache / --work / --stems / --output / --all (dry run unless --yes, --song NAME)
+lyrics    optional Whisper transcription of the vocal stem
+
+global:   --workdir DIR   --no-per-song   -v/--verbose   -q/--quiet   --version
+exit:     0 ok, 1 runtime error, 2 usage error
 ```
 
-Stem separation, melody and chord analysis are cached (`analysis/.cache.json`, keyed by the file's SHA-256 plus `--meter` / `--tempo-scale`), so re-running only redoes the (fast) arrangement stages. Intermediate files (`analysis/`, `midi/`, `render/`, `mix/`) are shared between songs (only the mood is per song), so with `--all` each song overwrites the previous one's working files; only `output/<song>/` and the stems are kept per song. Stem quality: `htdemucs_ft` by default (`BENGALI_JAZZ_DEMUCS_MODEL=htdemucs` for a faster model).
+Options of `run` (subsets are accepted by the single-stage commands):
 
-Environment variables: `BENGALI_JAZZ_ROOT` (repo/data root), `BENGALI_JAZZ_SEED`, `BENGALI_JAZZ_METER`, `BENGALI_JAZZ_TEMPO_SCALE`, `BENGALI_JAZZ_INPUT`, `BENGALI_JAZZ_SOUNDFONT`, `BENGALI_JAZZ_DEMUCS_MODEL`, `BENGALI_JAZZ_VST_CONFIG`, `BENGALI_JAZZ_VST_DIRS`, `BENGALI_JAZZ_EMPIRICAL`.
-
-Slow ballads: beat trackers often lock onto double density. If the reported tempo is twice what you feel, pass `--tempo-scale 0.5` (the chord stage prints the bar-line contrast per meter as a hint).
-
-### Mood sign-off (optional, improves instrument/reharm judgment calls)
-
-Lyrics-and-context mood detection needs a human (or an LLM assistant) in the loop — it's not scriptable. If you skip it, the pipeline falls back to acoustic-only heuristics automatically. The mood is saved together with the song's name and only applied to that song (a mood saved for another song is ignored). To supply it:
+| Group | Option | Meaning |
+|---|---|---|
+| input | `--input FILE` | file to process (default: the only file in `input/`) |
+| | `--all` | every file in `input/`, one after another; a failure does not stop the batch |
+| analysis | `--meter {2,3,4,6}` | force beats per bar (default: tracked, then checked against the harmony) |
+| | `--tempo-scale X` | `0.5` = the song is felt at half the tracked tempo (slow ballad), `2` = double; only `1/N` and powers of two |
+| | `--force` | ignore the stage cache |
+| arrangement | `--solo` / `--full-band` | force the band |
+| | `--lead {piano,tenor_sax,alto_sax,soprano_sax}` | force the lead instrument |
+| | `--seed N` | reproducible arrangement (default 0) |
+| | `--pop-size N`, `--generations N` | search size (default from `--quality`) |
+| speed | `--quality {fast,balanced,best}` | preset, see below |
+| | `--jobs N` | parallel render / mix / pYIN workers (default `min(4, CPUs)`) |
+| | `--device {auto,cpu,cuda,mps}` | Demucs and beat_this device (auto picks CUDA / MPS when torch sees one) |
+| stages | `--from S`, `--to S`, `--only S`, `--dry-run` | stage keys: `separate melody chords acoustic profile arrange render mix master` |
+| output | `--output-dir DIR` | copy the result here (one song only) |
+| | `--reference WAV` | also master against this track (matchering) |
+| | `--json` | result as JSON on stdout, progress on stderr |
 
 ```bash
-python -m bengali_jazz_engine.save_mood <mood_keyword> "<why>" [song_name]   # song defaults to the file in input/
+bengali-jazz-engine --quality fast --solo                       # quick draft
+bengali-jazz-engine run --input "input/My Song.mp3" --tempo-scale 0.5 --seed 7
+bengali-jazz-engine arrange --lead alto_sax --generations 12    # only redo the arrangement
+bengali-jazz-engine render && bengali-jazz-engine mix           # only redo sound (unchanged renders are skipped)
+bengali-jazz-engine run --from arrange --to mix --dry-run       # what would run
+bengali-jazz-engine --all -q                                    # whole input/ folder
+bengali-jazz-engine info --json
+bengali-jazz-engine clean --work --song "My Song" --yes
 ```
 
-Mood keywords: `devotional`, `contemplative`, `melancholic`, `romantic`, `longing`, `nostalgic`, `patriotic`, `defiant`, `playful`, `upbeat`.
+### Workspace and outputs
 
-### Running stages individually
+Everything lives under one workspace root (the checkout for an editable install, `BENGALI_JAZZ_ROOT`, or `--workdir DIR`):
 
-Every stage module has a `run()` function and a `__main__` block:
+```
+input/                      your audio
+stems/<model>/<song>/       Demucs stems (slow to recreate)
+work/<song>/{analysis,midi,render,mix}/   everything for one song - batches never overwrite each other
+analysis/.cache.json, analysis/.cache_files/   stage cache (+ per-song snapshots)
+output/<song>/              "<song> - jazz.wav", melody_lead / chords / bass / drums .mid,
+                            arrangement_report.json, song_profile.json, chord_estimate.json, manifest.json
+soundfonts/  tools/  data/  vst.json
+```
+
+`manifest.json` records the version, seed, quality preset, device, settings, overrides and stage timings of the run. `--no-per-song` uses one shared working directory instead.
+
+### Speed vs accuracy
+
+`--quality` selects the knobs (`--pop-size`, `--generations`, `--jobs`, `--device` override them):
+
+| preset | Demucs model | shifts | search (pop x generations) | sfizz quality |
+|---|---|---|---|---|
+| fast | `htdemucs` (single model) | 0 | 6 x 3 | 1 |
+| balanced (default) | `htdemucs_ft` (bag of 4) | 1 | 10 x 6 | 2 |
+| best | `htdemucs_ft` | 2 | 16 x 12 | 3 |
+
+What makes it fast without changing the result:
+
+- role stems render **in parallel** (SFZ / SF2 / FluidSynth are subprocesses; hosted VST3 plugins stay on one thread); a render whose MIDI and backend configuration did not change is **skipped**;
+- the `sfz` backend uses sfizz's offline renderer, which is far faster than hosting the sfizz VST3 in real-time blocks;
+- the mix processes stems in threads;
+- pYIN runs in overlapping chunks in separate processes, chunk seams handled by 3 s of context;
+- stage outputs are cached per song and restored from snapshots when you come back to a song.
+
+Measured on one 4:40 song (Zindagi Kahin Bhi Thamti Nahi), 4 CPU cores, no GPU, stems cached, before -> after: melody 63.5 s -> 30.9 s; render 69.3 s -> 3.9 s; mix 11.3 s -> 3.1 s; the whole run with stems cached 176 s -> 74 s (same arrangement, fitness 0.885). Equivalence checks: pYIN chunking gave identical voiced decisions and pitches on an 80 s excerpt and the same 641 notes on the full song; the offline sfizz render matches the VST3 render's loudness envelope with correlation 0.9997 (RMS 0.0460 vs 0.0464). Demucs (about 9 min for this song on CPU with `htdemucs_ft`) is now the dominant cost: use `--quality fast`, or a GPU (`--device cuda`).
+
+### Mood sign-off (optional)
+
+Lyrics-and-context mood detection needs a human (or an LLM assistant) in the loop. Without it the profile falls back to an acoustic guess. The mood is stored with the song and only applies to that song:
 
 ```bash
-python -m bengali_jazz_engine.detect_chords     # beats, downbeats, chords, key, tuning
-python -m bengali_jazz_engine.song_profile      # understand + choose instrumentation
-python -m bengali_jazz_engine.arranger          # generate -> score -> refine, writes midi/*.mid
-python -m bengali_jazz_engine.stage8_render
-python -m bengali_jazz_engine.stage9_mix
-python -m bengali_jazz_engine.stage3b_transcribe   # optional: Whisper lyrics of the vocal stem (needs the `lyrics` extra); not part of the pipeline
+bengali-jazz-engine mood set longing "slow, wistful" --song "My Song"
+bengali-jazz-engine mood show --song "My Song"
+bengali-jazz-engine mood list
 ```
 
-Stages need the earlier ones' outputs on disk (see the table in `docs/ARCHITECTURE.md`).
+Keywords: `devotional`, `contemplative`, `melancholic`, `romantic`, `longing`, `nostalgic`, `patriotic`, `defiant`, `playful`, `upbeat`.
 
-## Evidence
+### Environment variables
 
-`docs/EVIDENCE.md` lists where every arranger parameter comes from (fitted from the Weimar Jazz Database / iReal charts, published measurement, or plain assumption). Refit with `python -m bengali_jazz_engine.fit_corpus --download` (statistics) and `python -m bengali_jazz_engine.fit_weights` (harmony fitness weights, held-out AUC ~0.93).
+`BENGALI_JAZZ_ROOT`, `BENGALI_JAZZ_SEED`, `BENGALI_JAZZ_QUALITY`, `BENGALI_JAZZ_JOBS`, `BENGALI_JAZZ_DEVICE`, `BENGALI_JAZZ_METER`, `BENGALI_JAZZ_TEMPO_SCALE`, `BENGALI_JAZZ_INPUT`, `BENGALI_JAZZ_SOUNDFONT`, `BENGALI_JAZZ_DEMUCS_MODEL`, `BENGALI_JAZZ_VST_CONFIG`, `BENGALI_JAZZ_VST_DIRS`, `BENGALI_JAZZ_EMPIRICAL`. Command line options win over the environment.
 
-## Pipeline stages
+## How it thinks
 
-| Stage | What it does |
-|---|---|
-| 1 | Stem separation (Demucs `htdemucs_ft`), cached |
-| 2 | Monophonic melody extraction (pYIN, tuning-corrected, confidence-gated octave fixes), cached |
-| 3c | Beat + downbeat tracking (`beat_this`), tuning-corrected chroma chords with bass-root bonus + Viterbi, key estimate, cached |
-| 3 | Acoustic analysis (tempo/key shared with 3c) |
-| 4 | Understand the song, choose lead instrument + band (`song_profile.py`) |
-| 5 | Arrange: chord search, comping, bass, drums, lead phrasing; iterate on a fitness score (`arranger.py`) |
-| 8 | Render dry stems (FluidSynth, or a VST3 via `pedalboard` if configured) |
-| 9 | Mix (per-stem EQ/reverb/pan, compression, limiter) |
-| 10 | *(optional, `--reference`)* Mastering (`matchering`) |
+1. **Understand**: tempo, real downbeat grid (`beat_this`), meter, key, tuning, sections, per-bar energy, melody character (register, range, density, phrasing) and mood.
+2. **Decide the instrumentation** from that evidence: wide-range lyrical melodies and sad / longing moods lean to sax, busy melodies to piano, register picks tenor vs alto.
+3. **Generate, score, refine** (`arrange/arranger.py`): candidate arrangements come from a small genome (reharm rate, embellishment, swing amount, behind-the-beat, comping style / density, bass feel). Chords are solved by dynamic programming over half-bar windows against the melody (chord-scale and avoid-note theory, secondary dominants, tritone subs, deviation cost from the source harmony, corpus chord-transition costs). Candidates are scored on melody / chord consonance, voice-leading, faithfulness, dynamics vs the source, texture, chord-change rate and harmonic interest; genomes evolve, then clashing windows are re-opened and re-solved. Every iteration is logged in `arrangement_report.json`.
+4. **Render + mix**: dry stems per role (VST3 / SFZ / SF2 / FluidSynth), then per-stem EQ, reverb, pan, bus compression and limiting.
 
-See `docs/ARCHITECTURE.md` for the module map, data flow, on-disk contract and known problems; `docs/EVIDENCE.md` for where each parameter comes from; `docs/TECHNICAL_PAPER.md` for the failure-mode history (its early sections describe the first, template-based version); `docs/QA_REPORT.md` for the test/lint status. `docs/ORIGINAL_DESIGN_BRIEF.md` is the original, superseded design brief.
+The jazz rules (swing ratio vs tempo, rootless voicings, walking / two-feel bass, ride / brush patterns, sax vibrato / scoops / falls, approach notes) live in `arrange/theory.py` and `arrange/arranger.py`; `docs/EVIDENCE.md` says where each number comes from.
+
+## Package layout
+
+```
+src/bengali_jazz_engine/
+  cli.py  __main__.py   command line
+  pipeline.py           stage order, ranges, per-song runs, manifest
+  config.py             workspace paths, settings, quality presets, RNG, stage cache
+  mood.py               per-song mood sign-off
+  analysis/             separate, melody, chords (beats/meter/chords/key), acoustic, profile, lyrics
+  arrange/              theory (pure jazz theory), arranger (search + layers), progression (key-aware 7th chords)
+  render/               vst (backends), stems (parallel + cached render), mix, master
+  corpus/               fit_stats, fit_weights (offline fitting from WJazzD / iReal)
+  data/                 empirical.json, fitted_weights.json (shipped derived statistics)
+tests/                  unit, math, CLI, pipeline and end-to-end tests
+docs/                   ARCHITECTURE, EVIDENCE, QA_REPORT, TECHNICAL_PAPER, ORIGINAL_DESIGN_BRIEF (historical)
+```
+
+See `docs/ARCHITECTURE.md` for the data flow, on-disk contract and known problems; `docs/EVIDENCE.md` for parameter provenance; `docs/TECHNICAL_PAPER.md` for the failure-mode history (its early sections describe the first, template-based version); `docs/QA_REPORT.md` for the test and lint status.
+
+Refit the statistics: `bengali-jazz-engine corpus fit-stats --download` (raw corpora go to `data/`, output to `src/bengali_jazz_engine/data/empirical.json`) and `bengali-jazz-engine corpus fit-weights` (harmony fitness weights, held-out AUC ~0.93).
 
 ## Better instruments: VST3, SFZ and per-role soundfonts
 
-`vst.json` (copy `vst.example.json`; it is gitignored) maps each role - `piano`, `comp`,
-`tenor_sax`, `alto_sax`, `soprano_sax`, `bass`, `drums` - to a backend. Anything not
-mapped, or that fails to load, falls back to the GM soundfont with a warning.
+`vst.json` (copy `vst.example.json`; it is gitignored) maps each role (`piano`, `comp`, `tenor_sax`, `alto_sax`, `soprano_sax`, `bass`, `drums`) to a backend. Anything not mapped, or that fails to load, falls back to the GM soundfont with a warning that includes the renderer's error output. `bengali-jazz-engine vst check` shows the resolved backend per role.
 
 ```json
 { "plugins": {
     "piano":     { "sf2": "soundfonts/SalamanderGrandPiano.sf2", "program": 0 },
-    "tenor_sax": { "sfz": "soundfonts/sfz/TenorSaxophone-SFZ+FLAC-20200717/TenorSaxophone-20200717.sfz" },
+    "tenor_sax": { "sfz": "soundfonts/sfz/TenorSaxophone-SFZ+FLAC-20200717/TenorSaxophone-20200717.sfz", "gain_db": 0 },
     "bass":      { "path": "C:/Program Files/Common Files/VST3/MyBass.vst3", "state": "presets/bass.state" }
 } }
 ```
 
-* **VST3** (`path`): hosted by `pedalboard`. Options: `plugin_name` (files with several
-  plugins, e.g. sfizz), `state` (raw plugin state saved from a DAW - how a sampler VST is
-  pointed at its instrument), `preset`, `parameters`, `buffer_size`, `gain_db`.
-* **SFZ** (`sfz`): rendered by sfizz's offline renderer (the same engine as the sfizz
-  VST3); the reliable route for SFZ libraries from Python.
+* **SFZ** (`sfz`): rendered by sfizz's offline renderer; the fast, reliable route for SFZ libraries. Options: `quality`, `polyphony`, `tail_sec`, `gain_db`.
 * **SF2** (`sf2`, optional `program`): FluidSynth with a soundfont just for that role.
+* **VST3** (`path`): hosted by `pedalboard`. Options: `plugin_name`, `state` (raw plugin state saved from a DAW), `preset`, `parameters`, `buffer_size`, `gain_db`. A `path` entry pointing at `sfizz.vst3` with `"plugin_name": "sfizz"` and `"sfz_file": "...sfz"` builds the plugin state that loads that SFZ; the sfizz VST3 handles at most 1024 frames per callback, so its `buffer_size` is capped at 1024. Prefer the `sfz` backend, which is much faster.
 
-A `path` entry pointing at `sfizz.vst3` with `"plugin_name": "sfizz"` and `"sfz_file": "...sfz"` builds the plugin state that loads that SFZ (no DAW needed). The sfizz VST3 handles at most 1024 frames per callback, so the engine caps its `buffer_size` at 1024 (the default for sfizz entries); larger values used to log thousands of `[sfizz] Could not get a temporary buffer` warnings.
-
-`python -m bengali_jazz_engine.vst --list` shows installed VST3 plugins and
-`--inspect PATH [--plugin-name NAME]` shows whether one is an instrument. The sfizz VST3
-loads as an instrument, but a sampler VST3 stays silent until its state points at an
-instrument, so give it a `state` file.
+`bengali-jazz-engine vst list` shows installed VST3 plugins and `vst inspect PATH [--plugin-name NAME]` whether one is an instrument (a sampler VST3 stays silent until its state points at an instrument).
 
 ## Credits (sound libraries used in the reference setup)
 
@@ -144,14 +190,21 @@ instrument, so give it a `state` file.
 
 ## Known limitations
 
-- Pitch/chord/beat detection on real audio is statistical, not exact — expect the occasional wrong chord guess or octave slip, not 100% accuracy (published benchmarks put even state-of-the-art monophonic pitch trackers around ~90% raw accuracy).
-- No sample library ships with this repo; the default render is a GM soundfont. Map roles to SFZ/SF2/VST3 instruments in `vst.json` for a better tone.
-- Meter, section and mood detection are heuristics: the meter check is validated on synthetic chroma only, and without `mood.json` the mood is an acoustic guess from tempo and mode.
-- Only 2, 3, 4 and 6 beats per bar are recognised; other meters fall back to 4.
-- Reharmonization is rule-based search (theory-driven costs plus a hand-set fitness), not a trained model - it will not always make the choice a human arranger would. Only the consonance / chord-plausibility / change-rate weights are fitted (to real vs corrupted jazz); the rest are hand-set, and the fitness saturates (voice-leading, faithfulness and interest often score 1.0), so the genome search moves the result only slightly. See `docs/EVIDENCE.md`.
-- Chord recognition is triads only, at most one chord per half-bar; sevenths/extensions come from the reharmonizer, not from the audio.
-- The mix is only as good as the soundfont; GM saxophones are the weakest part - a VST3/sample library helps most.
+- Pitch / chord / beat detection on real audio is statistical, not exact (published benchmarks put even state-of-the-art monophonic pitch trackers around ~90% raw accuracy).
+- Meter, section and mood detection are heuristics: the meter check is validated on synthetic chroma only (no annotated real 3/4 or 6/8 recordings are available), and without a saved mood the mood is an acoustic guess. Only 2, 3, 4 and 6 beats per bar are recognised; other meters fall back to 4.
+- Reharmonization is rule-based search, not a trained model. Only the consonance / chord-plausibility / change-rate weights are fitted (to real vs corrupted jazz); the rest are hand-set, and the fitness saturates (voice-leading, faithfulness and interest often score 1.0), so the genome search moves the result only slightly. See `docs/EVIDENCE.md`.
+- Chord recognition is triads at bar resolution; sevenths and extensions come from the reharmonizer, not from the audio.
+- The mix is only as good as the instruments; GM saxophones are the weakest part - an SFZ / SF2 / VST3 library helps most.
+- No sample library ships with this repo.
+
+## Development
+
+```bash
+pip install -e .[dev]
+ruff check src tests
+pytest -q            # unit, math, CLI, pipeline and end-to-end tests (render tests skip without FluidSynth + a soundfont)
+```
 
 ## License
 
-MIT — see `LICENSE`.
+MIT - see `LICENSE`.

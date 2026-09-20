@@ -2,10 +2,16 @@
 import itertools
 
 import numpy as np
-from arranger import Context, evaluate, generate, optimize, solve_chords
-from config import set_seed
-from song_profile import decide_instrumentation
-from theory import (
+
+from bengali_jazz_engine.analysis.profile import decide_instrumentation
+from bengali_jazz_engine.arrange.arranger import (
+    Context,
+    evaluate,
+    generate,
+    optimize,
+    solve_chords,
+)
+from bengali_jazz_engine.arrange.theory import (
     CHORD_TONES,
     RANGES,
     bass_note,
@@ -23,6 +29,7 @@ from theory import (
     transition_cost,
     voicing_motion,
 )
+from bengali_jazz_engine.config import set_seed
 
 # ---- theory ---------------------------------------------------------------
 
@@ -199,7 +206,7 @@ def test_sax_lead_output_is_monophonic_in_range_with_pitch_bends():
 
 
 def test_repair_reduces_melody_clash_without_touching_clean_windows():
-    from arranger import repair_chords, window_clash
+    from bengali_jazz_engine.arrange.arranger import repair_chords, window_clash
 
     # bars 0-1 fit C, bar 2 holds F (natural 11 over Cmaj7 = clash), bar 3 fits G
     ctx = make_ctx(["C", "C", "C", "G"], [(64, 0.0, 4.0, 80), (65, 4.0, 6.0, 80), (67, 6.0, 8.0, 80)])
@@ -227,9 +234,10 @@ def test_generate_accepts_explicit_chords():
 def test_saved_mood_only_applies_to_its_own_song(tmp_path, monkeypatch):
     import json
 
-    import song_profile
+    from bengali_jazz_engine import config
+    from bengali_jazz_engine.analysis import profile as song_profile
 
-    monkeypatch.setattr(song_profile, "ANALYSIS_DIR", tmp_path)
+    monkeypatch.setattr(config, "ANALYSIS_DIR", tmp_path)
     assert song_profile.load_saved_mood("A") is None                       # no file
     (tmp_path / "mood.json").write_text(json.dumps({"mood": "longing", "song": "A"}))
     assert song_profile.load_saved_mood("A") == "longing"

@@ -10,13 +10,13 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import itertools
 
 import librosa
 import numpy as np
 import pretty_midi
-from config import ANALYSIS_DIR, MIDI_DIR, find_input_audio
+from ..config import find_input_audio
+from .. import config as cfg
 
 SAD = {"melancholic", "longing", "nostalgic", "romantic"}
 CALM = {"devotional", "contemplative"}
@@ -142,7 +142,7 @@ def build_profile(estimate, notes, saved_mood=None):
 
 
 def load_melody_notes(path=None):
-    pm = pretty_midi.PrettyMIDI(str(path or MIDI_DIR / "melody_raw_expressive.mid"))
+    pm = pretty_midi.PrettyMIDI(str(path or cfg.MIDI_DIR / "melody_raw_expressive.mid"))
     if not pm.instruments or not pm.instruments[0].notes:
         raise ValueError("melody MIDI has no notes - the vocal stem produced no pitched melody")
     return sorted(((n.pitch, n.start, n.end, n.velocity) for n in pm.instruments[0].notes), key=lambda n: n[1])
@@ -151,7 +151,7 @@ def load_melody_notes(path=None):
 def load_saved_mood(song):
     """Mood saved for `song` in analysis/mood.json, else None. A mood saved for another song (or
     a legacy file with no song name) is ignored so it cannot leak into a different track."""
-    path = ANALYSIS_DIR / "mood.json"
+    path = cfg.ANALYSIS_DIR / "mood.json"
     if not path.exists():
         return None
     data = json.loads(path.read_text())
@@ -162,14 +162,14 @@ def load_saved_mood(song):
 
 
 def run():
-    estimate = json.loads((ANALYSIS_DIR / "chord_estimate.json").read_text())
+    estimate = json.loads((cfg.ANALYSIS_DIR / "chord_estimate.json").read_text())
     saved = load_saved_mood(find_input_audio().stem)
     profile = build_profile(estimate, load_melody_notes(), saved)
 
-    (ANALYSIS_DIR / "song_profile.json").write_text(json.dumps(profile, indent=2))
+    (cfg.ANALYSIS_DIR / "song_profile.json").write_text(json.dumps(profile, indent=2))
     inst = profile["instrumentation"]
     # back-compat file read by the render stage
-    (ANALYSIS_DIR / "lead_instrument.json").write_text(json.dumps(
+    (cfg.ANALYSIS_DIR / "lead_instrument.json").write_text(json.dumps(
         {"lead_instrument": inst["lead"], "mood_keyword": profile["mood"]}, indent=2))
     print(f"Song: {profile['tempo_bpm']:.0f} BPM, key {profile['key']['tonic']} {profile['key']['mode']}, "
           f"mood {profile['mood']} ({profile['mood_source']}), {len(profile['sections'])} sections")

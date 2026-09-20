@@ -13,26 +13,22 @@ are data-derived instead of hand-set. Output: data/fitted_weights.json (loaded b
 
     python -m bengali_jazz_engine.fit_weights
 """
+import itertools
 import json
 import sqlite3
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import itertools
 
 import numpy as np
-import pandas as pd
-from config import ROOT
-from fit_corpus import parse_root, wjazz_quality
-from theory import harmonic_rhythm_target, note_cost, transition_cost
 
-DATA = ROOT / "data"
-OUT = DATA / "fitted_weights.json"
+from .. import config as cfg
+from ..arrange.theory import harmonic_rhythm_target, note_cost, transition_cost
+from .fit_stats import parse_root, wjazz_quality
+
 FEATURES = ("consonance", "plausibility", "rate_dev")
 
 
 def tune_tables(con):
+    import pandas as pd
+
     mel = pd.read_sql("select melid, onset, pitch, duration, beat, tatum, beatdur from melody", con)
     bt = pd.read_sql("select melid, onset, bar, chord from beats where chord is not null and chord != '' and chord != 'NC'", con)
     info = pd.read_sql("select melid, avgtempo from solo_info", con).set_index("melid").avgtempo
@@ -104,16 +100,17 @@ def logistic_fit(x, y, l2=1e-2, iters=400, lr=0.5):
 
 
 def auc(score, y):
-    order = np.argsort(score)
-    ranks = np.empty(len(score))
-    ranks[order] = np.arange(1, len(score) + 1)
+    """Area under the ROC curve (Mann-Whitney U) with tied scores given their average rank."""
+    from scipy.stats import rankdata
+
+    ranks = rankdata(score)
     pos = y == 1
     return float((ranks[pos].sum() - pos.sum() * (pos.sum() + 1) / 2) / (pos.sum() * (~pos).sum()))
 
 
 def run():
     rng = np.random.RandomState(0)
-    con = sqlite3.connect(str(DATA / "wjazzd.db"))
+    con = sqlite3.connect(str(cfg.DATA_DIR / "wjazzd.db"))
     x, y = build_dataset(con, rng)
     tunes = int(len(y) // 3)
     # held-out split by tune (rows come in groups of 3)
@@ -132,7 +129,8 @@ def run():
         "real_feature_means": {f: round(float(x[y == 1][:, i].mean()), 4) for i, f in enumerate(FEATURES)},
         "single_feature_auc": {f: round(auc(-x[:, i], y), 3) for i, f in enumerate(FEATURES)},
     }
-    OUT.write_text(json.dumps(result, indent=1))
+    out = cfg.PACKAGE_DATA / "fitted_weights.json"
+    out.write_text(json.dumps(result, indent=1))
     print(json.dumps(result, indent=1))
     return result
 

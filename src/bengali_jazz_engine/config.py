@@ -1,4 +1,13 @@
-"""Shared paths/constants for the pipeline. Run everything with venv/Scripts/python.exe."""
+"""Workspace paths, settings, RNG and the stage cache.
+
+Everything path-like is a module attribute that ``set_root`` can re-point (``--workdir`` /
+``BENGALI_JAZZ_ROOT``), so other modules read ``cfg.ANALYSIS_DIR`` at call time instead of
+copying the value at import. Importing this module creates no directories; call
+``ensure_dirs()`` before writing.
+
+Per-song layout: ``work/<song>/{analysis,midi,render,mix}`` when ``PER_SONG`` is on (the
+default), so a batch run keeps every song's analysis. ``use_song(name)`` selects the song.
+"""
 import hashlib
 import json
 import os
@@ -6,27 +15,72 @@ import random
 import shutil
 from pathlib import Path
 
-# repo root = three levels up from src/bengali_jazz_engine/config.py, unless
-# overridden (e.g. running from an installed package rather than a checkout)
-ROOT = Path(os.environ.get("BENGALI_JAZZ_ROOT", Path(__file__).resolve().parents[2]))
+PACKAGE_DIR = Path(__file__).resolve().parent
+PACKAGE_DATA = PACKAGE_DIR / "data"          # derived statistics shipped with the package
 
-INPUT_DIR = ROOT / "input"
-STEMS_DIR = ROOT / "stems"
-ANALYSIS_DIR = ROOT / "analysis"
-MIDI_DIR = ROOT / "midi"
-RENDER_DIR = ROOT / "render"
-MIX_DIR = ROOT / "mix"
-SOUNDFONT_DIR = ROOT / "soundfonts"
-TOOLS_DIR = ROOT / "tools"
-
-# Best-first: MuseScore General is a noticeably better GM set than FluidR3
-# (esp. piano/bass/brushes); FluidR3 stays as a fallback. Override with
-# BENGALI_JAZZ_SOUNDFONT=/path/to/font.sf2.
-SOUNDFONT_CANDIDATES = (
-    "MuseScore_General.sf2",
-    "GeneralUser_GS.sf2",
-    "FluidR3_GM.sf2",
+AUDIO_EXTS = (".wav", ".mp3", ".flac", ".m4a")
+SOUNDFONT_CANDIDATES = ("MuseScore_General.sf2", "GeneralUser_GS.sf2", "FluidR3_GM.sf2")
+MOOD_KEYWORDS = (
+    "devotional", "contemplative", "melancholic", "romantic", "longing",
+    "nostalgic", "patriotic", "defiant", "playful", "upbeat",
 )
+LEAD_PROGRAM = {"tenor_sax": 66, "trumpet": 56, "piano": 0}
+
+# quality presets: speed <-> accuracy knobs used by the stages
+QUALITY_PRESETS = {
+    "fast": {"demucs_model": "htdemucs", "demucs_shifts": 0, "pop_size": 6, "generations": 3, "sfizz_quality": 1},
+    "balanced": {"demucs_model": "htdemucs_ft", "demucs_shifts": 1, "pop_size": 10, "generations": 6, "sfizz_quality": 2},
+    "best": {"demucs_model": "htdemucs_ft", "demucs_shifts": 2, "pop_size": 16, "generations": 12, "sfizz_quality": 3},
+}
+
+# ---- mutable state (set by set_root / set_seed / the CLI) --------------------
+ROOT: Path
+INPUT_DIR: Path
+STEMS_DIR: Path
+BASE_ANALYSIS_DIR: Path
+SOUNDFONT_DIR: Path
+TOOLS_DIR: Path
+OUTPUT_DIR: Path
+DATA_DIR: Path            # raw corpora (wjazzd.db, JazzStandards.json) live here
+WORK_DIR: Path
+ANALYSIS_DIR: Path
+MIDI_DIR: Path
+RENDER_DIR: Path
+MIX_DIR: Path
+CACHE_FILE: Path
+SOUNDFONT: Path
+SONG: str | None = None
+PER_SONG = True
+SEED = int(os.environ.get("BENGALI_JAZZ_SEED", "0"))
+DEMUCS_MODEL = os.environ.get("BENGALI_JAZZ_DEMUCS_MODEL", "htdemucs_ft")
+
+SETTINGS = {
+    "quality": os.environ.get("BENGALI_JAZZ_QUALITY", "balanced"),
+    "demucs_shifts": None,       # None -> from the quality preset
+    "pop_size": None,
+    "generations": None,
+    "sfizz_quality": None,
+    "device": os.environ.get("BENGALI_JAZZ_DEVICE", "auto"),
+    "jobs": int(os.environ.get("BENGALI_JAZZ_JOBS", "0")),   # 0 -> min(4, cpu count)
+    "lead": None,                # force a lead instrument (piano / tenor_sax / alto_sax)
+}
+
+# Manual analysis overrides (CLI --meter / --tempo-scale, or env). meter: beats per bar;
+# tempo_scale: 0.5 = the song is felt at half the tracked tempo (half-time), 2.0 = double.
+OVERRIDES = {
+    "meter": int(os.environ["BENGALI_JAZZ_METER"]) if os.environ.get("BENGALI_JAZZ_METER") else None,
+    "tempo_scale": float(os.environ["BENGALI_JAZZ_TEMPO_SCALE"]) if os.environ.get("BENGALI_JAZZ_TEMPO_SCALE") else None,
+    "input": os.environ.get("BENGALI_JAZZ_INPUT") or None,
+}
+
+
+def default_root() -> Path:
+    """BENGALI_JAZZ_ROOT, else the source checkout (editable install), else the current directory."""
+    env = os.environ.get("BENGALI_JAZZ_ROOT")
+    if env:
+        return Path(env)
+    checkout = PACKAGE_DIR.parents[1]
+    return checkout if (checkout / "pyproject.toml").exists() and (checkout / "src").is_dir() else Path.cwd()
 
 
 def _pick_soundfont() -> Path:
@@ -39,27 +93,84 @@ def _pick_soundfont() -> Path:
     return SOUNDFONT_DIR / SOUNDFONT_CANDIDATES[0]
 
 
-SOUNDFONT = _pick_soundfont()
+def _apply_song_dirs() -> None:
+    global ANALYSIS_DIR, MIDI_DIR, RENDER_DIR, MIX_DIR, CACHE_FILE
+    base = WORK_DIR / SONG if (PER_SONG and SONG) else ROOT
+    ANALYSIS_DIR, MIDI_DIR = base / "analysis", base / "midi"
+    RENDER_DIR, MIX_DIR = base / "render", base / "mix"
+    CACHE_FILE = BASE_ANALYSIS_DIR / ".cache.json"
 
-# Reproducibility: every stochastic stage draws from rng(stage) so the same
-# input + seed gives the same arrangement. Set via --seed / BENGALI_JAZZ_SEED.
-SEED = int(os.environ.get("BENGALI_JAZZ_SEED", "0"))
+
+def set_root(root) -> None:
+    """Point the whole workspace at `root` (input/, stems/, work/, output/, soundfonts/, tools/, data/)."""
+    global ROOT, INPUT_DIR, STEMS_DIR, BASE_ANALYSIS_DIR, SOUNDFONT_DIR, TOOLS_DIR, OUTPUT_DIR, DATA_DIR
+    global WORK_DIR, SOUNDFONT
+    ROOT = Path(root).resolve()
+    INPUT_DIR, STEMS_DIR = ROOT / "input", ROOT / "stems"
+    BASE_ANALYSIS_DIR, WORK_DIR = ROOT / "analysis", ROOT / "work"
+    SOUNDFONT_DIR, TOOLS_DIR = ROOT / "soundfonts", ROOT / "tools"
+    OUTPUT_DIR, DATA_DIR = ROOT / "output", ROOT / "data"
+    SOUNDFONT = _pick_soundfont()
+    _apply_song_dirs()
 
 
-# Manual analysis overrides (CLI --meter / --tempo-scale, or env). meter: beats per bar;
-# tempo_scale: 0.5 = the song is felt at half the tracked tempo (half-time), 2.0 = double.
-OVERRIDES = {
-    "meter": int(os.environ["BENGALI_JAZZ_METER"]) if os.environ.get("BENGALI_JAZZ_METER") else None,
-    "tempo_scale": float(os.environ["BENGALI_JAZZ_TEMPO_SCALE"]) if os.environ.get("BENGALI_JAZZ_TEMPO_SCALE") else None,
-    "input": os.environ.get("BENGALI_JAZZ_INPUT") or None,   # process this file instead of the only file in input/
-}
-AUDIO_EXTS = (".wav", ".mp3", ".flac", ".m4a")
-OUTPUT_DIR = ROOT / "output"
+def use_song(name) -> None:
+    """Select the song whose per-song working directory (work/<name>/...) the stages use."""
+    global SONG
+    SONG = name
+    _apply_song_dirs()
+
+
+def set_per_song(flag: bool) -> None:
+    global PER_SONG
+    PER_SONG = bool(flag)
+    _apply_song_dirs()
+
+
+def ensure_dirs() -> None:
+    for d in (STEMS_DIR, ANALYSIS_DIR, MIDI_DIR, RENDER_DIR, MIX_DIR, BASE_ANALYSIS_DIR):
+        d.mkdir(parents=True, exist_ok=True)
 
 
 def set_seed(seed: int) -> None:
     global SEED
     SEED = int(seed)
+
+
+def set_quality(name: str) -> None:
+    if name not in QUALITY_PRESETS:
+        raise ValueError(f"quality must be one of {sorted(QUALITY_PRESETS)}, got {name!r}")
+    global DEMUCS_MODEL
+    SETTINGS["quality"] = name
+    if "BENGALI_JAZZ_DEMUCS_MODEL" not in os.environ:
+        DEMUCS_MODEL = QUALITY_PRESETS[name]["demucs_model"]
+
+
+def setting(key: str):
+    """A tuning knob: explicit override, else the active quality preset."""
+    value = SETTINGS.get(key)
+    return value if value is not None else QUALITY_PRESETS[SETTINGS["quality"]].get(key)
+
+
+def n_jobs() -> int:
+    return SETTINGS["jobs"] or max(1, min(4, os.cpu_count() or 1))
+
+
+def resolve_device(requested: str | None = None) -> str:
+    """'auto' -> cuda / mps when torch sees one, else cpu."""
+    want = (requested or SETTINGS["device"] or "auto").lower()
+    if want != "auto":
+        return want
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:  # noqa: BLE001 - no torch / broken install -> cpu
+        return "cpu"
+    return "cpu"
 
 
 def rng(stage: str) -> random.Random:
@@ -69,8 +180,6 @@ def rng(stage: str) -> random.Random:
 
 
 # ---- stage caching -------------------------------------------------------
-CACHE_FILE = ROOT / "analysis" / ".cache.json"
-
 
 def file_sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -89,13 +198,39 @@ def _load_cache() -> dict:
 
 def cache_valid(stage: str, key: str, outputs) -> bool:
     """True if `stage` already ran for `key` (per song + settings) and every output still exists.
-    Note: outputs are shared paths, so this is only trusted when the *latest* run of the stage was `key`."""
+    Outputs are shared paths, so this is only trusted when the *latest* run of the stage was `key`."""
     entry = _load_cache().get(stage)
     latest = entry.get("latest") if isinstance(entry, dict) else entry
     return latest == key and all(Path(o).exists() for o in outputs)
 
 
-def cache_store(stage: str, key: str) -> None:
+def _snapshot_dir(stage: str, key: str) -> Path:
+    return CACHE_FILE.parent / ".cache_files" / stage / hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def cache_hit(stage: str, key: str, outputs) -> bool:
+    """cache_valid, or - when the shared outputs now belong to another song - restore them from the
+    snapshot this stage stored for `key`. Lets a batch reuse every song's analysis."""
+    if cache_valid(stage, key, outputs):
+        return True
+    snap = _snapshot_dir(stage, key)
+    outputs = [Path(o) for o in outputs]
+    if not outputs or not all((snap / o.name).exists() for o in outputs):
+        return False
+    for o in outputs:
+        o.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(snap / o.name, o)
+    cache_store(stage, key)
+    return True
+
+
+def cache_store(stage: str, key: str, outputs=()) -> None:
+    """Record `key` as the latest run of `stage`; `outputs` (files) are also snapshotted per key."""
+    if outputs:
+        snap = _snapshot_dir(stage, key)
+        snap.mkdir(parents=True, exist_ok=True)
+        for o in outputs:
+            shutil.copyfile(o, snap / Path(o).name)
     data = _load_cache()
     entry = data.get(stage)
     seen = list(entry.get("seen", [])) if isinstance(entry, dict) else []
@@ -106,22 +241,11 @@ def cache_store(stage: str, key: str) -> None:
     CACHE_FILE.write_text(json.dumps(data, indent=2))
 
 
-MOOD_KEYWORDS = (
-    "devotional", "contemplative", "melancholic", "romantic", "longing",
-    "nostalgic", "patriotic", "defiant", "playful", "upbeat",
-)
-
-# htdemucs_ft = fine-tuned per-stem models: best separation quality (slower
-# than plain "htdemucs"). Override with BENGALI_JAZZ_DEMUCS_MODEL=htdemucs.
-DEMUCS_MODEL = os.environ.get("BENGALI_JAZZ_DEMUCS_MODEL", "htdemucs_ft")
-
-LEAD_PROGRAM = {"tenor_sax": 66, "trumpet": 56, "piano": 0}
-
-for d in (STEMS_DIR, ANALYSIS_DIR, MIDI_DIR, RENDER_DIR, MIX_DIR):
-    d.mkdir(parents=True, exist_ok=True)
-
+# ---- inputs and external tools ---------------------------------------------
 
 def list_input_audio() -> list:
+    if not INPUT_DIR.exists():
+        return []
     return sorted(p for p in INPUT_DIR.iterdir() if p.suffix.lower() in AUDIO_EXTS)
 
 
@@ -164,3 +288,6 @@ def require_fluidsynth() -> Path:
         f"{exe_name} not found on PATH or under {TOOLS_DIR}. "
         f"Install FluidSynth (see README) or drop its binary under tools/."
     )
+
+
+set_root(default_root())

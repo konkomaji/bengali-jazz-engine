@@ -26,7 +26,7 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install "numpy<2" scipy librosa pretty_midi music21 pytest ruff
+          pip install "numpy<2" scipy librosa pretty_midi music21 mir_eval mido pandas pytest ruff
 
       - name: Lint (ruff)
         run: ruff check src/ tests/

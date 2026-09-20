@@ -1,9 +1,10 @@
 """Meter/tempo logic in detect_chords, and the sfizz VST3 state builder."""
 import struct
 
-import detect_chords as dc
 import numpy as np
-import vst
+
+from bengali_jazz_engine.analysis import chords as dc
+from bengali_jazz_engine.render import vst
 
 
 def chroma_with_changes_every(n_beats, beats):

@@ -1,14 +1,14 @@
 # Evidence ledger
 
 Where each arranger parameter comes from. **Fitted** = derived from data by
-`fit_corpus.py`. **Published** = a measurement in the cited work (read via search
+`corpus/fit_stats.py`. **Published** = a measurement in the cited work (read via search
 summaries/abstracts where the full text was inaccessible). **Assumption** = standard
 pedagogy or a judgement call that could not be verified; these are the first things to
 tune by ear.
 
 | Parameter | Value | Status | Source |
 |---|---|---|---|
-| Melody-note cost over a chord (non-chord tones) | 1.5 x -ln(P/Pmax) on strong beats, per chord quality | Fitted | Weimar Jazz Database, 456 solos (`data/empirical.json`) |
+| Melody-note cost over a chord (non-chord tones) | 1.5 x -ln(P/Pmax) on strong beats, per chord quality | Fitted | Weimar Jazz Database, 456 solos (`src/bengali_jazz_engine/data/empirical.json`) |
 | Soloist eighth-note ratio | 0.86-1.14 by tempo bin, median 1.1 : 1 | Fitted | WJazzD, 22.5k eighth pairs. Consistent with Corcoran & Frieler (median ~1.3) |
 | Chord-change rate target | slow tunes ~1.6 changes/bar, medium/up ~1.2-1.3 (band +-0.35) | Fitted | WJazzD chords per bar by tempo class |
 | Chord-transition cost | -ln P(next chord \| previous) relative to the likeliest move | Fitted | iReal-derived JazzStandards.json (~47k transitions) |
@@ -28,7 +28,7 @@ tune by ear.
 | Fraction of chords reharmonised | target 15-40% | Assumption | no corpus study found; tuned only by the "interest" fitness term |
 | Drum velocities, ghost-note rate (12%), feathered kick (70%) | | Assumption | qualitative sources only |
 | Sax ranges (tenor Ab2-E5, alto Db3-Ab5 concert) | | Assumption | general knowledge |
-| Fitness weights: consonance / plausibility / change-rate | 0.216 / 0.139 / 0.005 (a 0.36 pool split by fitted importances 0.60 / 0.385 / 0.013) | Fitted | Logistic regression, real WJazzD solos vs corrupted (melody shifted a semitone, chords shuffled); held-out AUC 0.93 (`fit_weights.py`). Chord-change-rate deviation carries almost no signal |
+| Fitness weights: consonance / plausibility / change-rate | 0.216 / 0.139 / 0.005 (a 0.36 pool split by fitted importances 0.60 / 0.385 / 0.013) | Fitted | Logistic regression, real WJazzD solos vs corrupted (melody shifted a semitone, chords shuffled); held-out AUC 0.93 (`corpus/fit_weights.py`). Chord-change-rate deviation carries almost no signal |
 | Fitness weights: voice-leading 0.14, faithfulness 0.22, dynamics 0.10, texture 0.10, interest 0.08 | | Assumption | No ground truth exists for these; not fitted to listener ratings |
 | Chord-smoothing strength | grid 0.01-0.2 chosen per song by fit to the sung melody | Data-driven | independent evidence: the vocal is not in the harmonic stem |
 | Melody prior on chord scores | 0.04 per unit clash | Assumption | tie-breaker only |
@@ -58,4 +58,5 @@ tune by ear.
 | Filosax | https://github.com/dave-foster/filosax | non-commercial, restricted |
 
 The raw databases are not committed (`data/*.db`, `data/JazzStandards.json` are
-gitignored); only the small derived `data/empirical.json` is.
+gitignored); only the small derived `src/bengali_jazz_engine/data/empirical.json` and
+`fitted_weights.json` are (they ship inside the package).

@@ -7,27 +7,18 @@ to keep low-end clean, and a slight 250 Hz mud cut. Sax gets a little
 presence around 4 kHz.
 """
 import json
-import sys
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
-from config import ANALYSIS_DIR, MIX_DIR, RENDER_DIR
-from pedalboard import (
-    Compressor,
-    HighpassFilter,
-    Limiter,
-    LowpassFilter,
-    PeakFilter,
-    Pedalboard,
-    Reverb,
-)
-from pedalboard.io import AudioFile
 
-SR = 44100
+from .. import config as cfg
+
+SR = 44100   # pedalboard is imported inside the functions that need it, so importing this module is cheap
 
 
 def load(path):
+    from pedalboard.io import AudioFile
+
     with AudioFile(str(path)) as f:
         audio = f.read(f.frames)
         sr = f.samplerate
@@ -51,6 +42,8 @@ def db(x):
 
 
 def stem_chain(kind, is_horn=False):
+    from pedalboard import Compressor, HighpassFilter, LowpassFilter, PeakFilter, Pedalboard, Reverb
+
     mud = PeakFilter(cutoff_frequency_hz=250, gain_db=-2.0, q=0.8)
     if kind == "bass":
         return Pedalboard([HighpassFilter(38), LowpassFilter(5000), mud,
@@ -67,18 +60,27 @@ def stem_chain(kind, is_horn=False):
 
 
 def run(full_band=False):
-    lead_name = json.loads((ANALYSIS_DIR / "lead_instrument.json").read_text())["lead_instrument"]
-    horn = lead_name != "piano"
-    stems = [("lead", RENDER_DIR / "melody.wav", 0.0, 0.15 if horn else 0.0),
-             ("comp", RENDER_DIR / "comping.wav", -5.0, -0.2)]
-    if full_band:
-        stems += [("bass", RENDER_DIR / "bass.wav", -4.0, 0.0), ("drums", RENDER_DIR / "drums.wav", -7.0, 0.0)]
+    from pedalboard import Compressor, Limiter, Pedalboard
+    from pedalboard.io import AudioFile
 
-    tracks = []
-    for kind, path, gain_db, p in stems:
-        audio = load(path)
-        audio = stem_chain("lead" if kind == "lead" else ("comp" if kind == "comp" else kind), horn)(audio, SR)
-        tracks.append(pan(audio * db(gain_db), p))
+    report = cfg.ANALYSIS_DIR / "arrangement_report.json"
+    if report.exists():
+        lead_name = json.loads(report.read_text())["instrumentation"]["lead"]
+    else:
+        lead_name = json.loads((cfg.ANALYSIS_DIR / "lead_instrument.json").read_text())["lead_instrument"]
+    horn = lead_name != "piano"
+    stems = [("lead", cfg.RENDER_DIR / "melody.wav", 0.0, 0.15 if horn else 0.0),
+             ("comp", cfg.RENDER_DIR / "comping.wav", -5.0, -0.2)]
+    if full_band:
+        stems += [("bass", cfg.RENDER_DIR / "bass.wav", -4.0, 0.0), ("drums", cfg.RENDER_DIR / "drums.wav", -7.0, 0.0)]
+
+    def process(item):
+        kind, path, gain_db, p = item
+        audio = stem_chain("lead" if kind == "lead" else ("comp" if kind == "comp" else kind), horn)(load(path), SR)
+        return pan(audio * db(gain_db), p)
+
+    with ThreadPoolExecutor(max_workers=min(cfg.n_jobs(), len(stems))) as pool:   # pedalboard releases the GIL
+        tracks = list(pool.map(process, stems))
 
     n = max(t.shape[1] for t in tracks)
     mix = np.zeros((2, n), np.float32)
@@ -95,7 +97,7 @@ def run(full_band=False):
     mix[:, :fade_in] *= np.linspace(0, 1, min(fade_in, n))[None, :]
     mix[:, -fade_out:] *= np.linspace(1, 0, min(fade_out, n))[None, :]
 
-    out = MIX_DIR / "rough_mix.wav"
+    out = cfg.MIX_DIR / "rough_mix.wav"
     with AudioFile(str(out), "w", SR, 2, bit_depth=24) as f:
         f.write(mix)
     print(f"Wrote {out}")

@@ -4,7 +4,7 @@ This is the fix for the pYIN harmonic-lock failure mode documented in
 docs/TECHNICAL_PAPER.md section 3.1 - correction must be robust to the
 *previous* note being the wrong one, not just anchor to it.
 """
-from stage2_melody import fix_note_octave_errors
+from bengali_jazz_engine.analysis.melody import fix_note_octave_errors
 
 
 def note(pitch, start, end, vel=80):

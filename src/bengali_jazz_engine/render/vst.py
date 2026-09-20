@@ -42,10 +42,9 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import pretty_midi
-from config import ROOT
+from .. import config as cfg
 
 SR = 44100
 SFIZZ_MAX_BLOCK = 1024  # sfizz's VST3 cannot allocate more per callback: larger blocks drop audio and spam warnings
@@ -91,11 +90,11 @@ def discover(dirs=None):
 def _resolve(p):
     """Relative backend paths in vst.json resolve against the repo root."""
     p = Path(p)
-    return p if p.is_absolute() else ROOT / p
+    return p if p.is_absolute() else cfg.ROOT / p
 
 
 def config_path():
-    return Path(os.environ.get("BENGALI_JAZZ_VST_CONFIG", ROOT / "vst.json"))
+    return Path(os.environ.get("BENGALI_JAZZ_VST_CONFIG", cfg.ROOT / "vst.json"))
 
 
 def _normalize(entry):
@@ -163,34 +162,53 @@ def _apply_gain(wav_path, gain_db):
         f.write(audio * (10 ** (gain_db / 20.0)))
 
 
+def _run(cmd):
+    """Run an external renderer; on failure raise with its stderr so the fallback warning says why."""
+    import subprocess
+
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-5:]
+        raise RuntimeError(f"{Path(cmd[0]).name} exited {proc.returncode}: " + " | ".join(tail))
+
+
 def find_sfizz_render():
     import shutil
 
     found = shutil.which("sfizz_render") or shutil.which("sfizz_render.exe")
     if found:
         return Path(found)
-    for cand in (ROOT / "tools").rglob("sfizz_render*"):
+    for cand in (cfg.ROOT / "tools").rglob("sfizz_render*"):
         if cand.is_file() and cand.suffix in ("", ".exe"):
             return cand
     raise FileNotFoundError("sfizz_render not found on PATH or under tools/")
 
 
 def render_sfz(midi_path, wav_path, spec):
-    import subprocess
+    """Offline sfizz render (about 40x faster than hosting the sfizz VST3 in real-time blocks; the envelope
+    of the output matches the plugin render to 0.9997). The MIDI gets a trailing pedal-up event so the last
+    note's release tail is rendered."""
+    import tempfile
 
     exe = find_sfizz_render()
-    subprocess.run([str(exe), "--sfz", str(_resolve(spec["sfz"])), "--midi", str(midi_path),
-                    "--wav", str(wav_path), "--samplerate", str(SR), "--quality", str(spec.get("quality", 3)),
-                    "--polyphony", str(spec.get("polyphony", 128))],
-                   check=True, capture_output=True)
+    pm = pretty_midi.PrettyMIDI(str(midi_path))
+    end = pm.get_end_time() + float(spec.get("tail_sec", TAIL_SEC))
+    if pm.instruments:
+        pm.instruments[0].control_changes.append(pretty_midi.ControlChange(64, 0, end))
+    with tempfile.TemporaryDirectory() as tmp:
+        padded = Path(tmp) / "padded.mid"
+        pm.write(str(padded))
+        _run([str(exe), "--sfz", str(_resolve(spec["sfz"])), "--midi", str(padded),
+              "--wav", str(wav_path), "--samplerate", str(SR),
+              "--quality", str(spec.get("quality", cfg.setting("sfizz_quality"))),
+              "--polyphony", str(spec.get("polyphony", 128))])
 
 
 def render_sf2(midi_path, wav_path, spec):
     """FluidSynth with a role-specific soundfont; `program` selects the preset."""
-    import subprocess
     import tempfile
 
-    from config import require_fluidsynth
+    from ..config import require_fluidsynth
 
     pm = pretty_midi.PrettyMIDI(str(midi_path))
     if "program" in spec:
@@ -200,9 +218,8 @@ def render_sf2(midi_path, wav_path, spec):
     with tempfile.TemporaryDirectory() as tmp:
         mid = Path(tmp) / "role.mid"
         pm.write(str(mid))
-        subprocess.run([str(require_fluidsynth()), "-ni", "-R", "0", "-C", "0", "-g", str(spec.get("fluid_gain", 0.6)),
-                        "-F", str(wav_path), "-r", str(SR), str(_resolve(spec["sf2"])), str(mid)],
-                       check=True, capture_output=True)
+        _run([str(require_fluidsynth()), "-ni", "-R", "0", "-C", "0", "-g", str(spec.get("fluid_gain", 0.6)),
+              "-F", str(wav_path), "-r", str(SR), str(_resolve(spec["sf2"])), str(mid)])
 
 
 _JUCE_B64 = ".ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+"

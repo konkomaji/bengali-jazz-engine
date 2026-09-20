@@ -25,14 +25,12 @@ import sys
 import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
-from config import ROOT
 
-DATA = ROOT / "data"
+from .. import config as cfg
+
 WJAZZD_URL = "https://jazzomat.hfm-weimar.de/download/downloads/wjazzd.db"
 STANDARDS_URL = "https://raw.githubusercontent.com/mikeoliphant/JazzStandards/master/JazzStandards.json"
-OUT = DATA / "empirical.json"
 
 ROOTS = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
 QUALITIES = ("maj7", "7", "m7", "m7b5")
@@ -186,9 +184,9 @@ def download(url, dest):
 
 def run(do_download=False):
     if do_download:
-        download(WJAZZD_URL, DATA / "wjazzd.db")
-        download(STANDARDS_URL, DATA / "JazzStandards.json")
-    con = sqlite3.connect(str(DATA / "wjazzd.db"))
+        download(WJAZZD_URL, cfg.DATA_DIR / "wjazzd.db")
+        download(STANDARDS_URL, cfg.DATA_DIR / "JazzStandards.json")
+    con = sqlite3.connect(str(cfg.DATA_DIR / "wjazzd.db"))
     costs, note_counts = fit_note_costs(con)
     result = {
         "sources": {"WJazzD": "Weimar Jazz Database, ODbL 1.0 (456 solos)",
@@ -198,11 +196,12 @@ def run(do_download=False):
         "soloist_swing": fit_swing(con),
         "harmonic_rhythm": fit_harmonic_rhythm(con),
     }
-    std = DATA / "JazzStandards.json"
+    std = cfg.DATA_DIR / "JazzStandards.json"
     if std.exists():
         result["transitions"], result["transition_counts"] = fit_transitions(std)
-    OUT.write_text(json.dumps(result, indent=1))
-    print(f"Wrote {OUT}")
+    out = cfg.PACKAGE_DATA / "empirical.json"
+    out.write_text(json.dumps(result, indent=1))
+    print(f"Wrote {out}")
     return result
 
 

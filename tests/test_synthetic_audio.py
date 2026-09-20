@@ -7,15 +7,16 @@ any future tweak (templates, penalties, tracker) can be compared against it.
 """
 import numpy as np
 import pytest
-from build_progression import build
-from config import cache_store, cache_valid, rng, set_seed
-from detect_chords import (
+
+from bengali_jazz_engine.analysis.chords import (
     PITCHES,
     analyze,
     estimate_key,
     pick_downbeat_phase,
 )
-from stage2_melody import extract_notes
+from bengali_jazz_engine.analysis.melody import extract_notes
+from bengali_jazz_engine.arrange.progression import build
+from bengali_jazz_engine.config import cache_store, cache_valid, rng, set_seed
 
 SR = 22050
 BAR_SEC = 2.0  # 120 BPM, 4/4
@@ -167,7 +168,7 @@ def test_rng_is_deterministic_per_seed_and_independent_per_stage():
 
 
 def test_cache_requires_matching_key_and_existing_outputs(tmp_path, monkeypatch):
-    import config
+    from bengali_jazz_engine import config
 
     monkeypatch.setattr(config, "CACHE_FILE", tmp_path / "cache.json")
     out = tmp_path / "out.txt"
@@ -181,7 +182,7 @@ def test_cache_requires_matching_key_and_existing_outputs(tmp_path, monkeypatch)
 
 
 def test_cache_remembers_every_song_and_trusts_only_the_latest(tmp_path, monkeypatch):
-    import config
+    from bengali_jazz_engine import config
 
     monkeypatch.setattr(config, "CACHE_FILE", tmp_path / "cache.json")
     out = tmp_path / "o.txt"
@@ -194,7 +195,7 @@ def test_cache_remembers_every_song_and_trusts_only_the_latest(tmp_path, monkeyp
 
 
 def test_find_input_audio_honours_explicit_input_and_rejects_ambiguity(tmp_path, monkeypatch):
-    import config
+    from bengali_jazz_engine import config
 
     a, b = tmp_path / "a.mp3", tmp_path / "b.wav"
     a.write_text("x")

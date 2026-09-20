@@ -6,22 +6,13 @@ octaves apart (observed: pitch 55 -> 86 -> 74 within ~0.5s on this song).
 pYIN is the right tool for a single melodic line: one f0 estimate per frame,
 physically can't produce that kind of garbage.
 """
-import sys
-from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import librosa
 import numpy as np
 import pretty_midi
-from config import (
-    DEMUCS_MODEL,
-    MIDI_DIR,
-    STEMS_DIR,
-    cache_store,
-    cache_valid,
-    file_sha256,
-    find_input_audio,
-)
+from ..config import cache_hit, cache_store, file_sha256, find_input_audio
+from .. import config as cfg
 from scipy.signal import medfilt
 
 MIN_NOTE_SEC = 0.08
@@ -29,6 +20,40 @@ MAX_GAP_SEC = 0.05  # bridge tiny unvoiced blips within a sustained note
 MEDIAN_WINDOW = 7   # frames, odd - kills single-frame octave-error blips
 CACHE_VERSION = "melody-v2"
 OCTAVE_FIX_MAX_CONF = 0.75  # only "correct" notes pYIN itself was unsure about
+
+
+PYIN_HOP = 512                 # librosa.pyin's default hop (frame_length 2048 // 4)
+PYIN_OVERLAP_SEC = 3.0         # context on each side of a chunk; only the chunk's core frames are kept
+PYIN_MIN_PARALLEL_SEC = 40.0   # shorter audio is not worth the process start-up
+
+
+def _pyin_chunk(args):
+    y, sr, fmin, fmax = args
+    f0, voiced, prob = librosa.pyin(y, fmin=fmin, fmax=fmax, sr=sr, hop_length=PYIN_HOP)
+    return f0, voiced, prob
+
+
+def pyin_parallel(y, sr, fmin, fmax, jobs=1):
+    """librosa.pyin split into overlapping chunks that run in separate processes. Each chunk starts on a
+    hop boundary, so its frames line up exactly with the whole-file frames; the overlap lets the pYIN
+    Viterbi settle before the kept (core) frames, so the result matches the single-process run except
+    for a handful of frames next to chunk seams."""
+    if jobs <= 1 or len(y) / sr < PYIN_MIN_PARALLEL_SEC:
+        return librosa.pyin(y, fmin=fmin, fmax=fmax, sr=sr, hop_length=PYIN_HOP)
+    n_frames = 1 + len(y) // PYIN_HOP
+    core = -(-n_frames // jobs)
+    ov = int(PYIN_OVERLAP_SEC * sr / PYIN_HOP)
+    plans, args = [], []
+    for c0 in range(0, n_frames, core):
+        c1 = min(c0 + core, n_frames)
+        a, b = max(0, c0 - ov), min(n_frames, c1 + ov)
+        plans.append((c0, c1, a))
+        args.append((y[a * PYIN_HOP: (b - 1) * PYIN_HOP + PYIN_HOP + 1], sr, fmin, fmax))
+    with ProcessPoolExecutor(max_workers=min(jobs, len(args))) as pool:
+        parts = list(pool.map(_pyin_chunk, args))
+    f0, voiced, prob = (np.concatenate([part[k][c0 - a: c1 - a] for (c0, c1, a), part in zip(plans, parts, strict=True)])
+                        for k in range(3))
+    return f0, voiced, prob
 
 
 def fix_note_octave_errors(notes, window=5, passes=3, confidences=None):
@@ -60,7 +85,7 @@ def fix_note_octave_errors(notes, window=5, passes=3, confidences=None):
 def extract_notes(y, sr):
     """Monophonic audio -> [(midi_pitch, start, end, velocity)], octave-corrected."""
     fmin, fmax = librosa.note_to_hz("C2"), librosa.note_to_hz("C6")
-    f0, voiced_flag, voiced_prob = librosa.pyin(y, fmin=fmin, fmax=fmax, sr=sr)
+    f0, voiced_flag, voiced_prob = pyin_parallel(y, sr, fmin, fmax, cfg.n_jobs())
     times = librosa.times_like(f0, sr=sr)
     hop = float(times[1] - times[0]) if len(times) > 1 else 0.0
     rms = librosa.feature.rms(y=y)[0]
@@ -133,13 +158,13 @@ def extract_notes(y, sr):
 
 def run():
     audio = find_input_audio()
-    out = MIDI_DIR / "melody_raw_expressive.mid"
+    out = cfg.MIDI_DIR / "melody_raw_expressive.mid"
     cache_key = f"{CACHE_VERSION}:{file_sha256(audio)}"
-    if cache_valid("melody", cache_key, [out]):
+    if cache_hit("melody", cache_key, [out]):
         print(f"Cached: {out}")
         return out
 
-    vocals = STEMS_DIR / DEMUCS_MODEL / audio.stem / "vocals.wav"
+    vocals = cfg.STEMS_DIR / cfg.DEMUCS_MODEL / audio.stem / "vocals.wav"
     if not vocals.exists():
         raise FileNotFoundError(f"Missing vocals stem: {vocals} - run stage1 first")
 
@@ -153,7 +178,7 @@ def run():
     pm.instruments.append(inst)
 
     pm.write(str(out))
-    cache_store("melody", cache_key)
+    cache_store("melody", cache_key, [out])
     print(f"Wrote {out} ({len(notes)} clean monophonic notes)")
     return out
 

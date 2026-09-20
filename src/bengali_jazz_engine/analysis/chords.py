@@ -14,29 +14,22 @@ Pipeline:
 - The song's key is estimated (Krumhansl-Kessler) and saved for the
   key-aware reharmonizer.
 """
+import hashlib
 import itertools
 import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import librosa
 import numpy as np
-from config import (
-    ANALYSIS_DIR,
-    DEMUCS_MODEL,
-    STEMS_DIR,
-    cache_store,
-    cache_valid,
-    file_sha256,
-    find_input_audio,
-)
+from ..config import OVERRIDES, cache_hit, resolve_device, cache_store, file_sha256, find_input_audio
+from .. import config as cfg
 
 PITCHES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 CHANGE_PENALTY = 0.15  # cosine-similarity-scale penalty for switching chords
 BASS_ROOT_WEIGHT = 0.4
 CACHE_VERSION = "chords-v6"
-PENALTY_GRID = (0.01, 0.03, 0.05, 0.08, 0.12, 0.2)
+PENALTY_GRID = (0.01, 0.03, 0.05, 0.08, 0.12, 0.2, 0.3, 0.45)
 MELODY_PRIOR = 0.04   # score units per unit of melody clash: a tie-breaker, never overrides the audio
 RATE_LAMBDA = 0.05   # complexity cost per chord change per bar when picking the smoothing strength
 
@@ -159,12 +152,15 @@ def regularize_grid(beats, downbeats, bpb):
     return new, np.array(sorted(set(np.round(bars, 6))))
 
 
+BEAT_TRACKER = {"used": "beat_this"}   # which tracker produced the grid (recorded in meter_evidence)
+
+
 def track_beats(audio_path, y_full, sr, drums_path=None, chroma=None, chroma_times=None):
     """-> (tempo_bpm, beat_times, bar_times, beats_per_bar)."""
     try:
         from beat_this.inference import File2Beats
 
-        beats, downbeats = File2Beats(device="cpu", dbn=False)(str(audio_path))
+        beats, downbeats = File2Beats(device=resolve_device(), dbn=False)(str(audio_path))
         beats, downbeats = np.asarray(beats, float), np.asarray(downbeats, float)
         if len(downbeats) < 3:
             raise RuntimeError("too few downbeats")
@@ -177,7 +173,8 @@ def track_beats(audio_path, y_full, sr, drums_path=None, chroma=None, chroma_tim
         beats, downbeats = regularize_grid(beats, downbeats, bpb)
         return tempo, beats, downbeats, bpb
     except Exception as exc:  # noqa: BLE001 - any failure -> librosa fallback
-        print(f"beat_this unavailable ({exc!r}); falling back to librosa")
+        print(f"WARNING: beat_this failed ({exc!r}); FALLING BACK to librosa beats and 4/4 - check tempo and meter")
+        BEAT_TRACKER["used"] = "librosa (fallback)"
 
     y_b, sr_b = (librosa.load(str(drums_path)) if drums_path and Path(drums_path).exists() else (y_full, sr))
     tempo, beats = librosa.beat.beat_track(y=y_b, sr=sr_b, units="frames")
@@ -256,7 +253,7 @@ def apply_meter_and_tempo(tempo, beats, downbeats, bpb, evidence, meter=None, te
 def melody_clash(chord_path, names, win_starts, melody_notes):
     """Mean weighted melody/chord cost of a chord path over the sung melody. An independent check on
     chord estimates: the vocal was not used to find the chords, so chords that fit it are more plausible."""
-    from theory import note_cost
+    from ..arrange.theory import note_cost
 
     roots = [PITCHES.index(n.rstrip("m")) for n in names]
     total = weight = 0.0
@@ -272,7 +269,7 @@ def melody_clash(chord_path, names, win_starts, melody_notes):
 
 def melody_cost_matrix(names, win_starts, win_ends, melody_notes):
     """(windows, chords) mean melody-note cost of each triad over each window's sung notes."""
-    from theory import note_cost
+    from ..arrange.theory import note_cost
 
     roots = [PITCHES.index(n.rstrip("m")) for n in names]
     quals = [("m7",) if n.endswith("m") else ("maj7", "7") for n in names]
@@ -382,16 +379,16 @@ def analyze(y_full, sr, y_harm, sr_h, bar_times, y_bass=None, tempo=None, beat_t
 
 
 def run():
-    from config import MIDI_DIR, OVERRIDES
-
     audio = find_input_audio()
-    out = ANALYSIS_DIR / "chord_estimate.json"
-    cache_key = f"{CACHE_VERSION}:{file_sha256(audio)}:{OVERRIDES['meter']}:{OVERRIDES['tempo_scale']}"
-    if cache_valid("chords", cache_key, [out]):
+    out = cfg.ANALYSIS_DIR / "chord_estimate.json"
+    melody_mid = cfg.MIDI_DIR / "melody_raw_expressive.mid"
+    melody_tag = hashlib.sha256(melody_mid.read_bytes()).hexdigest()[:12] if melody_mid.exists() else "nomelody"
+    cache_key = (f"{CACHE_VERSION}:{file_sha256(audio)}:{OVERRIDES['meter']}:{OVERRIDES['tempo_scale']}:{melody_tag}")
+    if cache_hit("chords", cache_key, [out]):
         print(f"Cached: {out}")
         return json.loads(out.read_text())["bars"]
 
-    stem_dir = STEMS_DIR / DEMUCS_MODEL / audio.stem
+    stem_dir = cfg.STEMS_DIR / cfg.DEMUCS_MODEL / audio.stem
     y_full, sr = librosa.load(str(audio))
     y_harm, sr_h = librosa.load(str(stem_dir / "other.wav"))
     bass_path = stem_dir / "bass.wav"
@@ -400,6 +397,7 @@ def run():
     tuning = float(librosa.estimate_tuning(y=y_harm, sr=sr_h))
     chroma = librosa.feature.chroma_cqt(y=y_harm, sr=sr_h, tuning=tuning)
     chroma_times = librosa.frames_to_time(np.arange(chroma.shape[1]), sr=sr_h)
+    BEAT_TRACKER["used"] = "beat_this"
     tempo, beat_times, bar_times, bpb = track_beats(
         audio, y_full, sr, stem_dir / "drums.wav", chroma, chroma_times)
     evidence = meter_evidence(beat_times, chroma, chroma_times)
@@ -409,18 +407,17 @@ def run():
         raise RuntimeError("Beat tracking found too few bars")
 
     notes = None
-    melody_mid = MIDI_DIR / "melody_raw_expressive.mid"
     if melody_mid.exists():
-        from song_profile import load_melody_notes
+        from .profile import load_melody_notes
 
         notes = load_melody_notes(melody_mid)
 
     result = analyze(y_full, sr, y_harm, sr_h, bar_times, y_bass, tempo, beat_times, bpb, notes,
                      tuning=tuning, chroma=chroma)
-    result["meter_evidence"] = {"chosen": bpb, "source": meter_note,
+    result["meter_evidence"] = {"chosen": bpb, "source": meter_note, "beat_tracker": BEAT_TRACKER["used"],
                                 "bar_line_contrast": {str(m): round(v[0], 3) for m, v in evidence.items()}}
     out.write_text(json.dumps(result, indent=2))
-    cache_store("chords", cache_key)
+    cache_store("chords", cache_key, [out])
 
     bars = result["bars"]
     flips = sum(1 for i in range(len(bars) - 1) if bars[i]["chord_guess"] != bars[i + 1]["chord_guess"])

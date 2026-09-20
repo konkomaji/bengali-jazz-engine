@@ -9,6 +9,8 @@ import os
 import re
 from pathlib import Path
 
+from ..config import PACKAGE_DATA
+
 PC_NAMES = ["C", "D-", "D", "E-", "E", "F", "G-", "G", "A-", "A", "B-", "B"]
 _NAME_TO_PC = {"C": 0, "C#": 1, "D-": 1, "D": 2, "D#": 3, "E-": 3, "E": 4, "F": 5, "F#": 6, "G-": 6,
                "G": 7, "G#": 8, "A-": 8, "A": 9, "A#": 10, "B-": 10, "B": 11}
@@ -47,8 +49,7 @@ def chord_pcs(chord):
 
 # ---- empirical statistics (fit_corpus.py: Weimar Jazz Database + iReal charts) ----
 
-_EMP_PATH = Path(os.environ.get("BENGALI_JAZZ_EMPIRICAL",
-                                Path(__file__).resolve().parents[2] / "data" / "empirical.json"))
+_EMP_PATH = Path(os.environ.get("BENGALI_JAZZ_EMPIRICAL", PACKAGE_DATA / "empirical.json"))
 NOTE_COST_SCALE = 1.5  # empirical -ln(P/Pmax) nats -> arranger cost units (deviation costs are ~0.7-1.3)
 
 
@@ -143,8 +144,8 @@ def transition_cost(prev, cur):
     table = EMPIRICAL["transitions"].get(prev[1])
     if not table:
         return None
-    cost = table[f"{(cur[0] - prev[0]) % 12}|{cur[1]}"]
-    return cost - min(table.values())
+    cost = table.get(f"{(cur[0] - prev[0]) % 12}|{cur[1]}")
+    return None if cost is None else cost - min(table.values())
 
 
 def harmonic_rhythm_target(bpm):

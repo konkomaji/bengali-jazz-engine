@@ -7,16 +7,18 @@ load/render falls back to FluidSynth with a warning, so the pipeline never
 stops for a plugin problem. Hybrid leads (piano + sax) are rendered per
 instrument, each with its own plugin, then summed.
 """
+import hashlib
+import json
 import subprocess
-import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import pretty_midi
-import vst
-from config import MIDI_DIR, RENDER_DIR, require_fluidsynth, require_soundfont
+from . import vst
+from ..config import require_fluidsynth, require_soundfont
+from .. import config as cfg
 
 
 def fluidsynth_render(midi_path: Path, wav_path: Path):
@@ -91,12 +93,64 @@ def render_lead(midi_path: Path, wav_path: Path):
         sum_wavs(wavs, wav_path)
 
 
-def run(full_band=False):
-    render_role(MIDI_DIR / "chords.mid", RENDER_DIR / "comping.wav", "comp")
+def role_uses_vst3(role):
+    """True for roles rendered by a hosted VST3 plugin (kept on one thread); SFZ/SF2/FluidSynth are subprocesses."""
+    spec = vst.plugin_for(role)
+    return bool(spec) and "sfz" not in spec and "sf2" not in spec
+
+
+def render_key(midi_path: Path, roles):
+    """Content key of a render: the MIDI bytes, each role's backend spec and the GM soundfont."""
+    h = hashlib.sha256(Path(midi_path).read_bytes())
+    for role in sorted(roles):
+        h.update(json.dumps([role, vst.plugin_for(role)], sort_keys=True, default=str).encode())
+    h.update(str(cfg.SOUNDFONT.name).encode())
+    h.update(str(cfg.setting("sfizz_quality")).encode())
+    return h.hexdigest()
+
+
+def midi_roles(midi_path: Path):
+    pm = pretty_midi.PrettyMIDI(str(midi_path))
+    return [i.name.removeprefix("lead_") if i.name.startswith("lead_") else (i.name or "piano") for i in pm.instruments]
+
+
+def render_cached(midi_path: Path, wav_path: Path, roles, fn):
+    """Skip the render when this exact MIDI + backend configuration was already rendered to `wav_path`."""
+    stage = f"render:{cfg.SONG}:{wav_path.name}"
+    key = render_key(midi_path, roles)
+    if cfg.cache_valid(stage, key, [wav_path]):
+        print(f"Cached render: {wav_path.name}")
+        return
+    fn()
+    cfg.cache_store(stage, key)
+
+
+def run(full_band=False, jobs=None):
+    """Render every role. Roles are independent, so subprocess-backed ones (SFZ, SF2, FluidSynth) run in
+    parallel threads; hosted VST3 plugins run one at a time on the calling thread. Unchanged renders are skipped."""
+    tasks = [("comp", cfg.MIDI_DIR / "chords.mid", cfg.RENDER_DIR / "comping.wav", False)]
     if full_band:
-        render_role(MIDI_DIR / "bass.mid", RENDER_DIR / "bass.wav", "bass")
-        render_role(MIDI_DIR / "drums.mid", RENDER_DIR / "drums.wav", "drums")
-    render_lead(MIDI_DIR / "melody_lead.mid", RENDER_DIR / "melody.wav")
+        tasks += [("bass", cfg.MIDI_DIR / "bass.mid", cfg.RENDER_DIR / "bass.wav", False),
+                  ("drums", cfg.MIDI_DIR / "drums.mid", cfg.RENDER_DIR / "drums.wav", False)]
+    tasks.append(("lead", cfg.MIDI_DIR / "melody_lead.mid", cfg.RENDER_DIR / "melody.wav", True))
+    cfg.RENDER_DIR.mkdir(parents=True, exist_ok=True)
+
+    def make(role, midi, wav, is_lead):
+        roles = midi_roles(midi) if is_lead else [role]
+        vst3 = any(role_uses_vst3(r) for r in roles)
+        fn = (lambda: render_lead(midi, wav)) if is_lead else (lambda: render_role(midi, wav, role))
+        return vst3, (lambda: render_cached(midi, wav, roles, fn))
+
+    prepared = [make(*t) for t in tasks]
+    parallel = [job for vst3, job in prepared if not vst3]
+    serial = [job for vst3, job in prepared if vst3]
+    workers = min(jobs or cfg.n_jobs(), max(1, len(parallel)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(job) for job in parallel]
+        for job in serial:
+            job()
+        for fut in futures:
+            fut.result()
 
 
 if __name__ == "__main__":

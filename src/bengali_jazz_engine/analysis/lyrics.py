@@ -6,13 +6,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import ANALYSIS_DIR, DEMUCS_MODEL, STEMS_DIR, find_input_audio
+from ..config import find_input_audio
+from .. import config as cfg
 
 
 def run():
     audio = find_input_audio()
-    vocals = STEMS_DIR / DEMUCS_MODEL / audio.stem / "vocals.wav"
+    vocals = cfg.STEMS_DIR / cfg.DEMUCS_MODEL / audio.stem / "vocals.wav"
     if not vocals.exists():
         raise FileNotFoundError(f"Missing vocals stem: {vocals} - run stage1 first")
 
@@ -20,11 +20,11 @@ def run():
         [
             sys.executable, "-m", "whisper", str(vocals),
             "--language", "Bengali", "--task", "transcribe",
-            "--model", "large-v3", "--output_dir", str(ANALYSIS_DIR),
+            "--model", "large-v3", "--output_dir", str(cfg.ANALYSIS_DIR),
         ],
         check=True,
     )
-    txt = ANALYSIS_DIR / f"{vocals.stem}.txt"
+    txt = cfg.ANALYSIS_DIR / f"{vocals.stem}.txt"
     print(f"Transcript at {txt}")
     return txt
 

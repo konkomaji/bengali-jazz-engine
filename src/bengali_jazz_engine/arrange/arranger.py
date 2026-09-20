@@ -23,17 +23,15 @@ import bisect
 import itertools
 import json
 import math
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 import pretty_midi
-from build_progression import SHARP_PCS, reharmonize
-from config import ANALYSIS_DIR, MIDI_DIR, rng
-from song_profile import load_melody_notes
-from theory import (
+
+from .. import config as cfg
+from ..analysis.profile import load_melody_notes
+from ..config import rng
+from .progression import SHARP_PCS, reharmonize
+from .theory import (
     GM_PROGRAM,
     RANGES,
     bass_note,
@@ -51,7 +49,8 @@ from theory import (
     voicing_motion,
 )
 
-POP_SIZE, GENERATIONS, ELITES = 10, 6, 3
+ELITES = 3
+LEADS = ("piano", "tenor_sax", "alto_sax", "soprano_sax")
 MAJOR_DIATONIC = [(0, "maj7"), (2, "m7"), (4, "m7"), (5, "maj7"), (7, "7"), (9, "m7"), (11, "m7b5")]
 MINOR_DIATONIC = [(0, "m7"), (2, "m7b5"), (3, "maj7"), (5, "m7"), (7, "7"), (8, "maj7"), (10, "7")]
 QUALITIES = ("maj7", "7", "m7", "m7b5")
@@ -79,7 +78,7 @@ _PLAUS_SCALE = 1.0
 
 def _load_fitted():
     global _PLAUS_SCALE
-    path = Path(__file__).resolve().parents[2] / "data" / "fitted_weights.json"
+    path = cfg.PACKAGE_DATA / "fitted_weights.json"
     try:
         fit = json.loads(path.read_text(encoding="utf-8"))
         imp = fit["relative_importance"]
@@ -102,7 +101,7 @@ WEIGHTS = {"consonance": HARMONY_POOL * _FITTED_SPLIT["consonance"],
 # ----------------------------------------------------------------------------
 
 class Context:
-    def __init__(self, estimate, profile, notes, forced_band=None):
+    def __init__(self, estimate, profile, notes, forced_band=None, forced_lead=None):
         self.bars = estimate["bars"]
         self.bpb = int(profile["beats_per_bar"])
         self.tempo = float(profile["tempo_bpm"])
@@ -112,6 +111,11 @@ class Context:
         self.inst = dict(profile["instrumentation"])
         if forced_band:
             self.inst["band"] = forced_band
+        if forced_lead:
+            if forced_lead not in LEADS:
+                raise ValueError(f"lead must be one of {LEADS}, got {forced_lead!r}")
+            self.inst["lead"] = forced_lead
+            self.inst["plan"] = "piano" if forced_lead == "piano" else "sax"
         self.notes = notes  # original melody (pitch, start, end, vel), sorted
 
         # beat grid derived from the downbeat-tracked bars (follows tempo drift)
@@ -554,16 +558,18 @@ def build_lead(ctx, chords, genome, r):
                 for k, c in enumerate((-150, -100, -50, -20, 0)):
                     ins.pitch_bends.append(pretty_midi.PitchBend(_bend(c), n["start"] + k * 0.02))
                 touched = True
+            falls = n["phrase_end"] and d >= 0.5 and r.random() < 0.5
             if d >= 0.6:                                                # vibrato after the onset
                 rate = VIBRATO_HZ.get(name, 5.5)                        # tenor slower than alto/soprano
                 t0 = n["start"] + 0.35
                 t = t0
-                while t < n["end"] - 0.05:
+                vib_end = n["end"] - (0.13 if falls else 0.05)          # stop before a fall so the bends never interleave
+                while t < vib_end:
                     depth = VIBRATO_CENTS * min(1.0, (t - t0) / 0.3 + 0.2)
                     ins.pitch_bends.append(pretty_midi.PitchBend(_bend(depth * math.sin(2 * math.pi * rate * (t - t0))), t))
                     t += 0.02
                 touched = True
-            if n["phrase_end"] and d >= 0.5 and r.random() < 0.5:      # fall off the end
+            if falls:                                                   # fall off the end
                 for k, c in enumerate((-40, -100, -170, -250)):
                     ins.pitch_bends.append(pretty_midi.PitchBend(_bend(c), n["end"] - 0.12 + k * 0.03))
                 touched = True
@@ -705,7 +711,9 @@ def crossover(a, b, r):
     return {k: (a[k] if r.random() < 0.5 else b[k]) for k in a}
 
 
-def optimize(ctx, pop_size=POP_SIZE, generations=GENERATIONS, log=print):
+def optimize(ctx, pop_size=None, generations=None, log=print):
+    pop_size = pop_size or cfg.setting("pop_size")
+    generations = generations or cfg.setting("generations")
     r = rng("arranger-search")
     pop = [dict(DEFAULT_GENOME)] + [random_genome(r) for _ in range(pop_size - 1)]
     cache, history = {}, []
@@ -764,7 +772,7 @@ def write_outputs(ctx, result):
                         ("bass", [arr["bass"]]), ("drums", [arr["drums"]])):
         pm = pretty_midi.PrettyMIDI(initial_tempo=ctx.tempo)
         pm.instruments.extend(insts)
-        pm.write(str(MIDI_DIR / f"{name}.mid"))
+        pm.write(str(cfg.MIDI_DIR / f"{name}.mid"))
     chords = [symbol(c) for c in arr["chords"]]
     report = {
         "instrumentation": ctx.inst,
@@ -775,14 +783,14 @@ def write_outputs(ctx, result):
         "chords_per_half_bar": chords,
         "original_chords_per_half_bar": [symbol(c) for c in ctx.original],
     }
-    (ANALYSIS_DIR / "arrangement_report.json").write_text(json.dumps(report, indent=2))
+    (cfg.ANALYSIS_DIR / "arrangement_report.json").write_text(json.dumps(report, indent=2))
     return report
 
 
-def run(forced_band=None):
-    estimate = json.loads((ANALYSIS_DIR / "chord_estimate.json").read_text())
-    profile = json.loads((ANALYSIS_DIR / "song_profile.json").read_text())
-    ctx = Context(estimate, profile, load_melody_notes(), forced_band)
+def run(forced_band=None, forced_lead=None):
+    estimate = json.loads((cfg.ANALYSIS_DIR / "chord_estimate.json").read_text())
+    profile = json.loads((cfg.ANALYSIS_DIR / "song_profile.json").read_text())
+    ctx = Context(estimate, profile, load_melody_notes(), forced_band, forced_lead or cfg.SETTINGS.get("lead"))
     print(f"Arranging {len(ctx.bars)} bars ({len(ctx.windows)} half-bar windows), lead={ctx.inst['lead']} "
           f"plan={ctx.inst['plan']} band={ctx.inst['band']}")
     result = optimize(ctx)

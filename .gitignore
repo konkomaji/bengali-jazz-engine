@@ -40,3 +40,6 @@ output/
 
 # per-run logs
 run*.log
+work/
+bench_*
+*.bak

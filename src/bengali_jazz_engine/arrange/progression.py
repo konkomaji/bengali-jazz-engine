@@ -10,11 +10,8 @@ Restraint: only every 4th V7->I resolution gets a tritone-sub color.
 Output: list of {symbol, start_sec, end_sec, start_bar, end_bar}.
 """
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import ANALYSIS_DIR
+from .. import config as cfg
 
 # music21-friendly spellings (flats use "-")
 PC_NAMES = ["C", "D-", "D", "E-", "E", "F", "G-", "G", "A-", "A", "B-", "B"]
@@ -113,11 +110,11 @@ def build(bars, key_tonic, key_mode):
 
 
 def run():
-    data = json.loads((ANALYSIS_DIR / "chord_estimate.json").read_text())
+    data = json.loads((cfg.ANALYSIS_DIR / "chord_estimate.json").read_text())
     key = data.get("key") or {"tonic": "C", "mode": "major"}
     progression = build(data["bars"], key["tonic"], key["mode"])
 
-    out = ANALYSIS_DIR / "progression.json"
+    out = cfg.ANALYSIS_DIR / "progression.json"
     out.write_text(json.dumps(progression, indent=2))
     print(f"Wrote {out} ({len(progression)} chord events from {len(data['bars'])} bars, "
           f"key {key['tonic']} {key['mode']})")

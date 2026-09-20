@@ -2,7 +2,8 @@
 import json
 
 import pretty_midi
-import vst
+
+from bengali_jazz_engine.render import vst
 
 
 def test_missing_config_means_no_plugins(tmp_path):
@@ -64,7 +65,7 @@ def test_midi_messages_are_time_ordered_with_correct_channels():
 
 
 def test_stage8_falls_back_to_fluidsynth_when_plugin_fails(tmp_path, monkeypatch):
-    import stage8_render as s8
+    from bengali_jazz_engine.render import stems as s8
 
     plug = tmp_path / "Bad.vst3"
     plug.write_text("not a plugin")
@@ -76,7 +77,7 @@ def test_stage8_falls_back_to_fluidsynth_when_plugin_fails(tmp_path, monkeypatch
 
 
 def test_split_by_instrument_names_roles_from_lead_tracks(tmp_path):
-    import stage8_render as s8
+    from bengali_jazz_engine.render import stems as s8
 
     pm = pretty_midi.PrettyMIDI()
     for name, prog in (("lead_piano", 0), ("lead_tenor_sax", 66)):
@@ -89,7 +90,7 @@ def test_split_by_instrument_names_roles_from_lead_tracks(tmp_path):
 
 
 def test_render_role_reports_sfz_and_sf2_backends_without_falling_back(tmp_path, monkeypatch, capsys):
-    import stage8_render as s8
+    from bengali_jazz_engine.render import stems as s8
 
     sfz = tmp_path / "Sax.sfz"
     sfz.write_text("x")

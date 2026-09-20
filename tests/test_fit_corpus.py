@@ -1,5 +1,5 @@
 """Corpus-fit helpers (pure parsing; the full fit needs the downloaded databases)."""
-import fit_corpus as fc
+from bengali_jazz_engine.corpus import fit_stats as fc
 
 
 def test_parse_root_handles_flats_sharps_and_slash_chords():

@@ -6,10 +6,10 @@
 > pipeline and the failures that shaped it; the measurements there are from that version.
 > The current pipeline differs: Demucs `htdemucs_ft`; `beat_this` beats and downbeats
 > (meter 2/3/4/6, `--tempo-scale`, `--meter`); chord smoothing chosen per song against the
-> vocal melody; a search-based arranger (`arranger.py`, `theory.py`) instead of a fixed
+> vocal melody; a search-based arranger (`arrange/arranger.py`, `arrange/theory.py`) instead of a fixed
 > reharmonisation table, with corpus-fitted statistics (`EVIDENCE.md`); the instrument
-> and band chosen from the song (`song_profile.py`) instead of always solo piano; VST3 /
-> SFZ / SF2 rendering per role (`vst.py`). `ARCHITECTURE.md` is the reference for the
+> and band chosen from the song (`analysis/profile.py`) instead of always solo piano; VST3 /
+> SFZ / SF2 rendering per role (`render/vst.py`). `ARCHITECTURE.md` is the reference for the
 > current design and `EVIDENCE.md` for parameter provenance. Sections 6 and 7 below
 > are updated to the current state.
 

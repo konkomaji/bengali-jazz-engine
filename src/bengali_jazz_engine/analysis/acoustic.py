@@ -3,10 +3,10 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import librosa
 import numpy as np
-from config import ANALYSIS_DIR, MIDI_DIR, find_input_audio
+from ..config import find_input_audio
+from .. import config as cfg
 
 
 def run():
@@ -15,7 +15,7 @@ def run():
 
     # tempo/key come from the chord stage (downbeat-tracked, octave-corrected)
     # so this file can never disagree with the grid the arrangement uses
-    est_path = ANALYSIS_DIR / "chord_estimate.json"
+    est_path = cfg.ANALYSIS_DIR / "chord_estimate.json"
     estimate = json.loads(est_path.read_text()) if est_path.exists() else {}
     tempo = estimate.get("tempo_bpm")
     if tempo is None:
@@ -25,7 +25,7 @@ def run():
     dynamic_range = float(rms.max() - rms.min())
     spectral_centroid = float(librosa.feature.spectral_centroid(y=y, sr=sr)[0].mean())
 
-    melody_mid = MIDI_DIR / "melody_raw_expressive.mid"
+    melody_mid = cfg.MIDI_DIR / "melody_raw_expressive.mid"
     key_name, key_mode = None, None
     if estimate.get("key"):
         key_name, key_mode = estimate["key"]["tonic"], estimate["key"]["mode"]
@@ -44,7 +44,7 @@ def run():
         "key_mode": key_mode,
     }
 
-    out = ANALYSIS_DIR / "acoustic.json"
+    out = cfg.ANALYSIS_DIR / "acoustic.json"
     out.write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))
     return result

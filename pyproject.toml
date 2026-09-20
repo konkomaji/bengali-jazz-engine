@@ -27,15 +27,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "ruff>=0.6", "mir_eval"]
 lyrics = ["openai-whisper"]
 
 [project.scripts]
-bengali-jazz-engine = "bengali_jazz_engine.run_pipeline:main"
+bengali-jazz-engine = "bengali_jazz_engine.cli:main"
+bengali-jazz = "bengali_jazz_engine.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+bengali_jazz_engine = ["data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 
