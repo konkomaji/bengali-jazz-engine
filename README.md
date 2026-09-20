@@ -199,6 +199,8 @@ Keywords: `devotional`, `contemplative`, `melancholic`, `romantic`, `longing`, `
 
 **The band listens to the lead** (`arrange/interplay.py`): chords land in the melody's gaps and are pushed off its onsets, the ride pattern changes from bar to bar and lightens under a busy melody, kick and rim hits lock to the melody's accents, breaths get drum fills, section starts get a crash, the bass walks with a contour instead of cycling, and the whole band steps back while the lead is busy.
 
+**A drummer, not a pattern generator**: the ride keeps one pattern per four-bar phrase; snare and kick play a motif that shadows the pianist's rhythm, repeated once, varied, then a set-up into the next phrase; each phrase swells toward its last bar; slow tunes (under 90 BPM) use brushes (swirl on 1 and 3, tap on 2 and 4). Every player has a habitual position against the beat (bass a little ahead, ride and snare behind, pianist about 10 ms behind, from the Jazz Trio Database) and drifts slowly around it (`Groove`, AR(1) timing), so the band is together but not quantised.
+
 **Raga-aware harmony** (`arrange/modes.py`): the melody's tonic and mode are found from where it rests (Sa / Pa stress, phrase-final notes, the mode's colour tone); a Bhairavi / Kafi / Khamaj / Yaman-type tune is harmonised with the chords of its own mode instead of a major-key ii-V-I. It is an approximation of a raga's scale, not of its phrases.
 
 The jazz rules (swing ratio vs tempo, rootless voicings, walking / two-feel bass, ride / brush patterns, sax vibrato / scoops / falls, approach notes) live in `arrange/theory.py` and `arrange/arranger.py`; `docs/EVIDENCE.md` says where each number comes from.

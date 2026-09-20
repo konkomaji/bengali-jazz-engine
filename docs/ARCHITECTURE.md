@@ -211,6 +211,12 @@ or divisor of it, after a rendered waltz (tracked 3) was re-read as 6 because ch
 inflate the contrast of the doubled meter. `tests/test_meter_audio.py` renders 4/4, 3/4 and 6/8 pieces with FluidSynth and
 checks the meter and the bar length through the real `beat_this` tracker.
 
+Feel: `interplay.Groove` gives each limb a lag (ride +8 ms, snare +12, kick -3, hi-hat -4, bass -5, piano +10) plus AR(1) drift (sigma 5 ms, correlation 0.9);
+the lags other than the JTD-measured pianist / bass values are assumptions. `interplay.phrases` splits the song into four-bar phrases (restarting at section
+starts); the drums pick one ride pattern per phrase, compose a snare / kick motif from the pianist's comping slots (`compose_cell`), repeat it, vary it
+(`vary_cell`) and end the phrase with `setup_hits`; slow tunes use the GM brush kit (swirl 40, tap 38). The interplay fitness term now also rewards
+phrase-level structure (variety between 0.3 and 0.8, not a loop and not noise) and drum / piano figures that lock part of the time.
+
 Band interplay and modal harmony: see `docs/RESEARCH.md`. The interplay fitness term (weight 0.11) is hand-set; the drum, comping and bass
 planners are rule-based (variety, dodging melody onsets, answering gaps), checked by tests and by measurement on rendered arrangements
 (drum bar patterns, comp / lead onset coincidence, bass line variety) but not yet by listeners.

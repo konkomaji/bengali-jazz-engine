@@ -48,7 +48,6 @@ from .theory import (
     melody_cost,
     note_cost,
     parse_symbol,
-    rhythm_lag,
     soloist_offbeat_fraction,
     swing_offbeat_fraction,
     symbol,
@@ -70,6 +69,7 @@ VIBRATO_HZ = {"tenor_sax": 5.0, "alto_sax": 6.0, "soprano_sax": 6.0}
 VIBRATO_CENTS = 35.0
 
 KICK, SNARE, HIHAT_PEDAL, RIDE, TOM_LO, TOM_MID, CRASH = 36, 38, 44, 51, 45, 47, 49
+BRUSH_TAP, BRUSH_SWIRL = 38, 40            # in the GM brush kit (slow tunes): tap and swirl
 
 BOUNDS = {"reharm": (0.0, 1.0), "embellish": (0.0, 0.3), "swing_amt": (0.6, 1.0),
           "behind_ms": (15.0, 40.0), "comp_density": (0.5, 1.4)}
@@ -334,13 +334,13 @@ def _gauss(r, sigma):
     return r.gauss(0.0, sigma)
 
 
-def build_comping(ctx, chords, genome, r):
+def build_comping(ctx, chords, genome, r, groove=None):
     inst = pretty_midi.Instrument(program=GM_PROGRAM["piano"], name="comping")
     swing = swing_offbeat_fraction(ctx.tempo, genome["swing_amt"])
     lead_is_piano = ctx.inst["lead"] == "piano" and ctx.inst["plan"] == "piano"
     top = 66 if lead_is_piano else 70
     voicings, prev, changes = [], None, []
-    lag = rhythm_lag("piano")          # JTD: the pianist sits about 10 ms behind the bass and drums
+    groove = groove or interplay.Groove(r)   # the pianist sits about 10 ms behind the bass and drums (JTD) and drifts
     horn = 0.75 if ctx.inst["lead"] != "piano" else 1.0
 
     def at(bar, beat):
@@ -358,8 +358,9 @@ def build_comping(ctx, chords, genome, r):
         prev = v
         voicings.append(v)
         roll = 0.025
+        lag = groove.offset("piano")
         for j, p in enumerate(sorted(v)):
-            s = t + lag + j * roll * r.uniform(0.7, 1.3) + _gauss(r, 0.006)
+            s = t + lag + j * roll * r.uniform(0.7, 1.3) + _gauss(r, 0.004)
             inst.notes.append(pretty_midi.Note(velocity=int(np.clip(vel + r.randint(-5, 5), 25, 100)),
                                                pitch=p, start=max(0.0, s), end=max(0.0, s) + dur))
 
@@ -397,7 +398,7 @@ def build_comping(ctx, chords, genome, r):
     return inst, voicings
 
 
-def build_bass(ctx, chords, genome, r):
+def build_bass(ctx, chords, genome, r, groove=None):
     inst = pretty_midi.Instrument(program=GM_PROGRAM["bass"], name="bass")
     feel = genome["bass_feel"]
     if feel == "auto":
@@ -405,7 +406,7 @@ def build_bass(ctx, chords, genome, r):
     # Jazz Trio Database: the number of bass onsets in a 4/4 bar follows a tempo-dependent distribution (walking bars
     # mostly have 4 onsets, two-feel bars <= 2 are rare at medium and up tempos); other meters keep the FiloBass rule
     counts = bass_count_probs(ctx.tempo) if (feel == "walk" and ctx.bpb == 4) else None
-    lag = rhythm_lag("bass")
+    groove = groove or interplay.Groove(r)
     prev_pitch = None
     for bar_i, b in enumerate(ctx.bars):
         w0 = bar_i * (2 if ctx.bpb == 4 else 1)
@@ -454,82 +455,105 @@ def build_bass(ctx, chords, genome, r):
                     pitch += 12
             pitch = int(np.clip(pitch, 28, 52))
             prev_pitch = pitch
-            t = b["start_sec"] + beat * bl + lag + _gauss(r, 0.005)
+            t = b["start_sec"] + beat * bl + groove.offset("bass") + _gauss(r, 0.003)
             length = bl * (1.9 if bar_two_feel and beat + 2 <= ctx.bpb else 0.92)
             vel = int(np.clip(66 + 14 * energy + r.randint(-5, 5), 40, 100))
             inst.notes.append(pretty_midi.Note(velocity=vel, pitch=pitch, start=max(0.0, t), end=max(0.0, t) + length))
     return inst
 
 
-def build_drums(ctx, genome, r):
-    """Ride, hi-hat foot, feathered kick and snare that respond to the lead: the ride pattern changes from bar to bar
-    and lightens under a busy melody, kick and rim hits lock to the melody accents, phrase-end gaps get fills, and
-    section starts get a crash (interplay.py)."""
-    inst = pretty_midi.Instrument(program=GM_PROGRAM["brush_kit"] if ctx.tempo < 90 else 0,
-                                  is_drum=True, name="drums")
+def build_drums(ctx, genome, r, comp_times=None, groove=None):
+    """A drummer, not a pattern generator. The ride keeps time with one pattern per four-bar phrase; the snare and kick
+    play a motif that shadows the pianist's rhythm (repeated, then varied, then a set-up into the next phrase); breaths in
+    the melody get fills; the phrase swells toward its last bar; each limb has its own habitual position against the
+    beat and drifts (Groove), so the band is together rather than quantised. Slow tunes use brushes (swirl and tap)."""
+    brush = ctx.tempo < 90
+    inst = pretty_midi.Instrument(program=GM_PROGRAM["brush_kit"] if brush else 0, is_drum=True, name="drums")
     swing = swing_offbeat_fraction(ctx.tempo, genome["swing_amt"])
     mm = ctx.mm
+    groove = groove or interplay.Groove(r)
     sections = ctx.profile["sections"]
     section_ends = {s["end_bar"] - 1 for s in sections}
     section_starts = {s["start_bar"] for s in sections if s["start_bar"] > 0}
+    n_slots = ctx.bpb * 2
+    comp_by_bar = interplay.comp_slots_by_bar(comp_times or [], ctx.bars, ctx.bpb)
+    role_of = {RIDE: "ride", HIHAT_PEDAL: "hihat", SNARE: "snare", KICK: "kick", BRUSH_TAP: "snare", BRUSH_SWIRL: "ride"}
 
     def add(pitch, t, vel, dur=0.09):
-        inst.notes.append(pretty_midi.Note(velocity=int(np.clip(vel, 15, 110)), pitch=pitch,
-                                           start=max(0.0, t + _gauss(r, 0.007)), end=max(0.0, t) + dur))
+        s = max(0.0, t + groove.offset(role_of.get(pitch, "snare")))
+        inst.notes.append(pretty_midi.Note(velocity=int(np.clip(vel, 15, 110)), pitch=pitch, start=s, end=s + dur))
 
-    prev_pat = None
     mean_bar = float(np.mean([b["end_sec"] - b["start_sec"] for b in ctx.bars]))
-    phrase_fills = []                                                   # a fill in each breath, wherever the bar lines fall
+    fills = []                                                          # a fill in each breath, wherever the bar lines fall
     for g0, g1 in mm.gaps:
-        if g1 - g0 >= 0.5 and any(abs(g0 - pe) < 0.02 for pe in mm.phrase_ends) and r.random() < 0.8:
-            phrase_fills.append((g0 + 0.04, min(g1 - 0.03, g0 + 1.25 * mean_bar), False))
-    for bar_i, b in enumerate(ctx.bars):
-        bl = (b["end_sec"] - b["start_sec"]) / ctx.bpb
-        a0, a1 = b["start_sec"], b["end_sec"]
-        energy = ctx.energy_at(bar_i)
-        light = mm.lightness(bar_i)
-        level = (0.6 + 0.6 * energy) * (1.0 - 0.2 * light)
-        pat = interplay.choose_ride_pattern(prev_pat, light, energy, r)
-        prev_pat = pat
+        if g1 - g0 >= 0.5 and any(abs(g0 - pe) < 0.02 for pe in mm.phrase_ends) and r.random() < 0.75:
+            fills.append((g0 + 0.04, min(g1 - 0.03, g0 + 1.25 * mean_bar), False))
+    for bar_i in section_ends:
+        if ctx.bpb == 4 and bar_i < len(ctx.bars):
+            b = ctx.bars[bar_i]
+            fills.append((b["start_sec"] + 3 * (b["end_sec"] - b["start_sec"]) / ctx.bpb, b["end_sec"], True))
 
-        fills = [f for f in phrase_fills if a0 <= f[0] < a1]           # fills that start in this bar (may run into the next)
-        if bar_i in section_ends and ctx.bpb == 4:
-            fills.append((a0 + 3 * bl, a1, True))                       # the turnaround into the next section
+    def free(t):
+        return not any(f0 < t < f1 for f0, f1, _big in fills)
 
-        def free(t, fills=fills, earlier=phrase_fills):
-            return not any(f0 < t < f1 for f0, f1, _big in [*fills, *earlier])
-
-        if ctx.bpb == 4:
-            ride = [(s, 85 if s in (2, 6) else (60 if s % 2 else 68)) for s in interplay.RIDE_PATTERNS[pat]]
-        else:
-            ride = [(2 * k, 85 if k % 2 else 68) for k in range(ctx.bpb)]
-            ride += [(2 * k + 1, 60) for k in range(ctx.bpb) if k % 2 == 1 or ctx.bpb == 3]
-        for slot, vel in ride:
-            t = a0 + (slot // 2) * bl + (swing * bl if slot % 2 else 0.0)
-            if free(t):
-                add(RIDE, t, vel * level)
-        for k in range(1, ctx.bpb, 2):
-            add(HIHAT_PEDAL, a0 + k * bl - 0.015, 64)                    # foot on 2 and 4
-        for k in range(ctx.bpb):
-            if r.random() < (0.8 if k == 0 else 0.4) and free(a0 + k * bl):
-                add(KICK, a0 + k * bl, r.randint(20, 35))               # feathered
-        onsets = mm.onset_slots(bar_i)
-        for t_acc, _slot in mm.accents(bar_i):                           # hit with the melody accents
-            if free(t_acc) and r.random() < 0.2 + 0.35 * energy:
-                if r.random() < 0.5:
-                    add(KICK, t_acc, r.randint(50, 72) * (0.8 + 0.3 * level))
-                else:
-                    add(SNARE, t_acc, r.randint(34, 52))
-        for slot in range(1, ctx.bpb * 2, 2):                            # ghost notes only where the melody is silent
-            t = a0 + (slot // 2) * bl + swing * bl
-            if slot not in onsets and free(t) and r.random() < 0.10 * (1.0 - light):
-                add(SNARE, t, r.randint(25, 40))
-        for f0, f1, big in fills:
-            kinds = {"snare": SNARE, "tom_mid": TOM_MID, "tom_lo": TOM_LO}
-            for t, kind, scale in interplay.fill_hits(f0, f1, r, big):
-                add(kinds[kind], t, 66 * level * scale)
-        if bar_i in section_starts and r.random() < 0.8:
-            add(CRASH, a0, 80 * level, dur=0.6)
+    kinds = {"kick": KICK, "snare": BRUSH_TAP if brush else SNARE}
+    for first, length in interplay.phrases(len(ctx.bars), section_starts):
+        idx = range(first, first + length)
+        energy = float(np.mean([ctx.energy_at(i) for i in idx]))
+        light = float(np.mean([mm.lightness(i) for i in idx]))
+        pat = interplay.choose_ride_pattern(None, light, energy, r)     # one ride pattern for the whole phrase
+        cell = interplay.compose_cell(comp_by_bar[first], energy, r)
+        for pos, bar_i in enumerate(idx):
+            b = ctx.bars[bar_i]
+            bl = (b["end_sec"] - b["start_sec"]) / ctx.bpb
+            a0 = b["start_sec"]
+            level = (0.6 + 0.6 * ctx.energy_at(bar_i)) * (1.0 - 0.2 * mm.lightness(bar_i)) * interplay.LEVEL_ARC[min(pos, 3)]
+            last = pos == length - 1 and length > 1
+            slots_ride = interplay.RIDE_PATTERNS[pat] if ctx.bpb == 4 else None
+            if last and slots_ride and r.random() < 0.6:
+                slots_ride = [s for s in slots_ride if s != 7]           # the last skip note drops out before the phrase turns
+            # timekeeping
+            if brush:
+                for k in range(0, ctx.bpb, 2):                           # swirl on 1 and 3, tap on 2 and 4, ride ping on the skip
+                    if free(a0 + k * bl):
+                        add(BRUSH_SWIRL, a0 + k * bl, 46 * level, dur=1.7 * bl)
+                for k in range(1, ctx.bpb, 2):
+                    if free(a0 + k * bl):
+                        add(BRUSH_TAP, a0 + k * bl, 44 * level)
+                for k in range(ctx.bpb):
+                    t = a0 + k * bl + swing * bl
+                    if r.random() < 0.55 and free(t):
+                        add(RIDE, t, 34 * level)
+            else:
+                ride = [(s, 85 if s in (2, 6) else (60 if s % 2 else 68)) for s in slots_ride] if slots_ride else \
+                    [(2 * k, 85 if k % 2 else 68) for k in range(ctx.bpb)] + [(2 * k + 1, 60) for k in range(ctx.bpb) if k % 2 or ctx.bpb == 3]
+                for slot, vel in ride:
+                    t = a0 + (slot // 2) * bl + (swing * bl if slot % 2 else 0.0)
+                    if free(t):
+                        add(RIDE, t, vel * level)
+            for k in range(1, ctx.bpb, 2):
+                add(HIHAT_PEDAL, a0 + k * bl - 0.015, 62)                # foot on 2 and 4
+            add(KICK, a0, r.randint(22, 34) * level) if r.random() < 0.8 and free(a0) else None    # feathered downbeat
+            # the motif: shadow the pianist, repeat once, vary, then lean into the next phrase
+            if last:
+                hits = interplay.setup_hits(ctx.bpb, n_slots)
+            elif pos == 1 or pos == 0:
+                hits = cell
+            else:
+                hits = interplay.vary_cell(cell, n_slots, r)
+            for slot, kind, vel in hits:
+                t = a0 + (slot // 2) * bl + (swing * bl if slot % 2 else 0.0)
+                if slot < n_slots and free(t):
+                    add(kinds[kind], t, vel * (0.85 + 0.25 * level))
+            for t_acc, _slot in mm.accents(bar_i):                       # and an occasional hit with the melody itself
+                if free(t_acc) and r.random() < 0.10 + 0.20 * ctx.energy_at(bar_i):
+                    add(KICK if r.random() < 0.5 else kinds["snare"], t_acc, r.randint(44, 62))
+            if bar_i in section_starts and pos == 0 and r.random() < 0.8:
+                add(CRASH, a0, 78 * level, dur=0.6)
+    for f0, f1, big in fills:
+        tom = {"snare": kinds["snare"], "tom_mid": TOM_MID, "tom_lo": TOM_LO}
+        for t, kind, scale in interplay.fill_hits(f0, f1, r, big):
+            add(tom[kind], t, 64 * scale * (1.0 if not brush else 0.8))
     return inst
 
 
@@ -667,10 +691,13 @@ def generate(ctx, genome, chords=None):
     # comping/bass/lead randomness and the fitness change is due to the chords alone
     r = rng("arrange:" + json.dumps(genome, sort_keys=True))
     chords = list(chords) if chords is not None else solve_chords(ctx, genome)
-    comp, voicings = build_comping(ctx, chords, genome, r)
+    groove = interplay.Groove(r)                                   # one feel for the whole band
+    comp, voicings = build_comping(ctx, chords, genome, r, groove)
     lead, emb_share = build_lead(ctx, chords, genome, r)
+    comp_times = sorted({round(n.start, 3) for n in comp.notes})
     arr = {"chords": chords, "comp": comp, "voicings": voicings, "lead": lead, "emb_share": emb_share,
-           "bass": build_bass(ctx, chords, genome, r), "drums": build_drums(ctx, genome, r)}
+           "bass": build_bass(ctx, chords, genome, r, groove),
+           "drums": build_drums(ctx, genome, r, comp_times, groove)}
     return arr
 
 
@@ -694,6 +721,7 @@ def interplay_score(ctx, arr):
         sigs[k].add((n.pitch, mm.slot_of(n.start, k)))
         drum_t.append(n.start)
     variety = len({frozenset(s) for s in sigs}) / max(1, n_bars)
+    variety = _tri(variety, 0.3, 0.8, 0.3)                                     # motifs repeat and vary: neither a loop nor noise
     lead_on = np.array(sorted(mm.starts))
     comp_on = sorted({round(n.start, 2) for n in arr["comp"].notes})
     bar_starts = np.array(starts)
@@ -710,7 +738,11 @@ def interplay_score(ctx, arr):
             long_gaps += 1
             answered += bool(hits.size and np.any((hits > g0) & (hits < g1)))
     response = answered / long_gaps if long_gaps else 1.0
-    return float(0.4 * min(1.0, variety / 0.6) + 0.3 * dodge + 0.3 * response)
+    drums_t = np.array(sorted(drum_t))
+    comp_arr = np.array([t for t in comp_on])
+    shadow = float(np.mean([np.min(np.abs(drums_t - t)) < 0.06 for t in comp_arr])) if comp_arr.size and drums_t.size else 0.0
+    together = _tri(shadow, 0.25, 0.75, 0.25)                                  # drums and piano lock some figures together
+    return float(0.3 * variety + 0.25 * dodge + 0.25 * response + 0.2 * together)
 
 
 def evaluate(ctx, arr):

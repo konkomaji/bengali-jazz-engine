@@ -15,7 +15,7 @@ All checks passed!
 
 ```
 $ pytest -q
-256 passed
+262 passed
 ```
 
 | File | Tests | Covers |

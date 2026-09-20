@@ -8,6 +8,8 @@ pattern and the bass line change from bar to bar and get lighter when the melody
 Everything here is pure: it returns times and slot numbers; ``arranger.py`` turns them into MIDI notes.
 """
 import bisect
+import itertools
+from typing import ClassVar
 
 import numpy as np
 
@@ -174,3 +176,81 @@ def walk_line(scale_pcs, start, goal, n, r, lo=28, hi=52):
         i = int(np.clip(j, 0, len(pool) - 1))
         line.append(pool[i])
     return line
+
+
+# ---- feel: together, not machine-locked -------------------------------------------------------------
+
+class Groove:
+    """Per-instrument timing feel. Every player has a habitual position against the beat (the ride sits a little behind,
+    the bass a little ahead, the snare late) and drifts slowly around it, so the band is together but not quantised.
+    Offsets are AR(1) noise (each note remembers the previous one), not independent jitter."""
+
+    LAG_MS: ClassVar[dict] = {"ride": 8.0, "hihat": -4.0, "snare": 12.0, "kick": -3.0, "bass": -5.0, "piano": 10.0}
+
+    def __init__(self, r, sigma_ms=5.0, corr=0.9):
+        self.r, self.sigma, self.corr = r, sigma_ms, corr
+        self.state = {}
+
+    def offset(self, role):
+        """Seconds to add to a note played by `role`."""
+        prev = self.state.get(role, 0.0)
+        cur = self.corr * prev + float(np.sqrt(1.0 - self.corr ** 2)) * self.sigma * self.r.gauss(0.0, 1.0)
+        self.state[role] = cur
+        return (self.LAG_MS.get(role, 0.0) + cur) / 1000.0
+
+
+# ---- phrases: the drummer plays ideas, not random bars -----------------------------------------------------
+
+PHRASE_BARS = 4
+LEVEL_ARC = (0.90, 0.96, 1.02, 1.08)         # a phrase swells toward its last bar
+
+
+def phrases(n_bars, section_starts, length=PHRASE_BARS):
+    """[(first_bar, n_bars)]: fixed-length phrases that restart at every section start."""
+    marks = sorted({0, *(b for b in section_starts if 0 < b < n_bars), n_bars})
+    out = []
+    for a, b in itertools.pairwise(marks):
+        for start in range(a, b, length):
+            out.append((start, min(length, b - start)))
+    return out
+
+
+def comp_slots_by_bar(comp_times, bars, bpb):
+    """Eighth-note slots of the piano comping per bar: the rhythm the drummer can shadow or answer."""
+    starts = [b["start_sec"] for b in bars]
+    out = [set() for _ in bars]
+    for t in comp_times:
+        k = min(max(bisect.bisect_right(starts, t) - 1, 0), len(bars) - 1)
+        a, e = bars[k]["start_sec"], bars[k]["end_sec"]
+        out[k].add(int(np.clip(round((t - a) / (e - a) * bpb * 2), 0, bpb * 2 - 1)))
+    return out
+
+
+def compose_cell(comp_slots, energy, r):
+    """The phrase motif: [(slot, instrument, velocity)] for its first bar. The drummer shadows part of the pianist's
+    rhythm (kick on even slots, snare rim on the others), the way a drummer and pianist lock a figure together."""
+    cell = []
+    for s in sorted(comp_slots):
+        if s == 0:
+            continue
+        if r.random() < 0.35 + 0.25 * energy:
+            cell.append((s, "kick" if (s % 2 == 0 and r.random() < 0.6) else "snare", int(r.randint(34, 52) + 14 * energy)))
+    return cell
+
+
+def vary_cell(cell, n_slots, r):
+    """The second time round: same idea, one hit moved or added."""
+    out = list(cell)
+    if out and r.random() < 0.6:
+        i = r.randrange(len(out))
+        s, k, v = out[i]
+        out[i] = (int(np.clip(s + r.choice([-1, 1]), 1, n_slots - 1)), k, v)
+    elif r.random() < 0.7:
+        out.append((r.choice([s for s in range(1, n_slots) if s not in {c[0] for c in out}] or [n_slots - 1]),
+                    "snare", r.randint(30, 44)))
+    return out
+
+
+def setup_hits(bpb, n_slots):
+    """The last bar of a phrase leans into the next one: kick on the last off-beat, snare on the last beat."""
+    return [(n_slots - 1, "kick", 60), (n_slots - 2, "snare", 48)]

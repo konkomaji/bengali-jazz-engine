@@ -197,3 +197,69 @@ def test_bass_line_has_contour_not_a_cycle():
     assert len({tuple(v) for v in per_bar.values()}) >= 12                          # bars differ from each other
     steps = [abs(b - a) for v in per_bar.values() for a, b in itertools.pairwise(v)]
     assert np.median(steps) <= 5
+
+
+# ---- feel: groove, phrases, shadowing -------------------------------------------------------------------
+
+def test_groove_gives_each_player_a_habitual_lag_and_a_slow_drift():
+    g = interplay.Groove(random.Random(1))
+    rides = np.array([g.offset("ride") for _ in range(400)]) * 1000
+    basses = np.array([g.offset("bass") for _ in range(400)]) * 1000
+    snares = np.array([g.offset("snare") for _ in range(400)]) * 1000
+    assert basses.mean() < rides.mean() < snares.mean()                       # bass ahead, ride behind, snare later still
+    assert 3.0 < rides.std() < 12.0                                          # alive, not a metronome and not sloppy
+    assert np.corrcoef(rides[:-1], rides[1:])[0, 1] > 0.6                    # drift, not independent jitter
+    assert abs(basses.mean() - interplay.Groove.LAG_MS["bass"]) < 3.0
+
+
+def test_phrases_are_four_bars_and_restart_at_sections():
+    assert interplay.phrases(10, []) == [(0, 4), (4, 4), (8, 2)]
+    assert interplay.phrases(12, [6]) == [(0, 4), (4, 2), (6, 4), (10, 2)]
+    assert sum(n for _s, n in interplay.phrases(37, [9, 20])) == 37
+
+
+def test_the_drum_motif_shadows_the_pianists_rhythm_and_is_then_varied():
+    r = random.Random(3)
+    comp = {0, 3, 4, 7}
+    cell = interplay.compose_cell(comp, 0.8, r)
+    assert all(s in comp and s != 0 for s, _k, _v in cell) and all(k in ("kick", "snare") for _s, k, _v in cell)
+    varied = interplay.vary_cell(cell or [(3, "snare", 40)], 8, random.Random(4))
+    assert varied != (cell or [(3, "snare", 40)]) and all(1 <= s < 8 for s, _k, _v in varied)
+    assert interplay.setup_hits(4, 8)[0][0] == 7                              # the last bar leans into the next phrase
+
+
+def test_drums_and_piano_lock_some_figures_but_are_not_quantised_together():
+    ctx = make_ctx(n_bars=24)
+    genome = dict(arranger.DEFAULT_GENOME)
+    arr = arranger.generate(ctx, genome)
+    comp_on = np.array(sorted({round(n.start, 3) for n in arr["comp"].notes}))
+    drum_on = np.array(sorted(n.start for n in arr["drums"].notes if n.pitch in (arranger.SNARE, arranger.KICK)))
+    near = [float(np.min(np.abs(drum_on - t))) for t in comp_on]
+    assert 0.2 < np.mean([d < 0.06 for d in near]) < 0.95                     # locked some of the time, not always
+    exact = np.mean([d < 0.002 for d in near])
+    assert exact < 0.2                                                        # and never machine-exact together
+
+
+def test_slow_tunes_get_brushes_and_a_swirl():
+    ctx = make_ctx()
+    ctx.tempo = 62.0
+    drums = arranger.build_drums(ctx, arranger.DEFAULT_GENOME, random.Random(2), [], None)
+    pitches = {n.pitch for n in drums.notes}
+    assert arranger.BRUSH_SWIRL in pitches and arranger.BRUSH_TAP in pitches and drums.program == 40
+    ctx.tempo = 140.0
+    fast = arranger.build_drums(ctx, arranger.DEFAULT_GENOME, random.Random(2), [], None)
+    assert arranger.BRUSH_SWIRL not in {n.pitch for n in fast.notes} and fast.program == 0
+
+
+def test_a_phrase_repeats_its_motif_then_varies_and_swells():
+    ctx = make_ctx(n_bars=8)
+    comp_times = [b * BAR + s * BAR / 8 for b in range(8) for s in (0, 3, 4, 7)]
+    drums = arranger.build_drums(ctx, arranger.DEFAULT_GENOME, random.Random(6), comp_times, None)
+    motif = {}
+    for n in drums.notes:
+        if n.pitch in (arranger.KICK, arranger.SNARE) and n.velocity >= 30:
+            bar = int(n.start // BAR)
+            motif.setdefault(bar, set()).add(round((n.start - bar * BAR) / BAR * 8))
+    assert motif.get(0) and len(motif[0] & motif.get(1, set())) >= 1            # bars 1 and 2 share the idea
+    level = [np.mean([n.velocity for n in drums.notes if arranger.RIDE == n.pitch and int(n.start // BAR) == b] or [0]) for b in range(4)]
+    assert level[3] >= level[0]                                                # the phrase swells toward its last bar
