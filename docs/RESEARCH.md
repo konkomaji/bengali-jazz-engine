@@ -73,6 +73,25 @@ Not implemented: tala-aware rhythm (Dadra / Kaharwa comping patterns), raga-spec
   small, bounded, reversible nudges and per-recording memory, and the `rate` command for pairwise comparisons that
   `corpus fit-ratings` turns into fitted weights. Neither invents data.
 
+## What a musician said about an early render (and what it changed)
+
+A working musician listened to the Rabindrasangeet render and said, in Bengali: the tune itself is not there; the piano is
+only about right; the piano should carry the melody first and it does not; it sounds like a child plinking; no chord sounds
+right. Both halves of that verdict were visible in the data before anything was changed:
+
+* the transcribed melody had 496 notes in 166 s, a median note of 0.16 s, 209 notes under 0.15 s and 93 notes outside the
+  song's own scale - a faithful transcription of every meend and grace turn, and not the tune anyone sings;
+* 113 of 246 melody notes (46%) sounded a semitone against a note of the comping, and only 47% of melody notes were inside
+  the chord under them.
+
+The fixes are the two a music director would reach for first - play the tune, and voice the chords under the singer rather
+than through them: `arrange/melodyline.py` reduces the line to its skeleton before arranging, and `theory.choose_voicing`
+became melody-aware (shells, no minor ninths, sixth chords under a melody on the root, suspensions where the melody insists
+on an avoid note, strictly in-scale for a modal song). After them, on the same recording: 342 melody notes with a median of
+0.30 s, 11% semitone clashes, 2% minor ninths, and every chord inside E Phrygian. On the second recording: 6% and 1%.
+
+This is measurement, not a verdict: whether the render now sounds like the song is for a listener to say.
+
 ## Open items
 
 1. Listening ratings to fit the interplay, voice-leading, faithfulness, dynamics, texture and interest weights.
@@ -80,3 +99,7 @@ Not implemented: tala-aware rhythm (Dadra / Kaharwa comping patterns), raga-spec
 3. A GPU test of Demucs `--segment` sizing and `--device cuda` (no GPU available here).
 4. Seventh-chord vocabulary and a neural pitch tracker, each only with annotated audio to measure against.
 5. Real annotated 3/4 and 6/8 recordings for the meter check.
+6. Swaralipi (sargam) input, so a Rabindrasangeet can be arranged from its published notation instead of from a
+   transcription of a recording - the melody would then be exact and none of the cleaning above would be needed.
+7. Play the removed ornaments as pitch bends (`melodyline.ornaments` already reports them) so the meend is heard
+   as a glide rather than dropped.

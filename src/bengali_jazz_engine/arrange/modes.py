@@ -103,7 +103,10 @@ def modal_original(triad_name, tonic_pc, mode):
     pcs = {"C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5, "F#": 6, "G": 7, "G#": 8, "A": 9, "A#": 10, "B": 11}
     minor = triad_name.endswith("m")
     root = pcs[triad_name[:-1] if minor else triad_name]
-    for r, q in modal_seventh_chords(tonic_pc, mode):
-        if r == root and q.startswith("m") == minor:
+    own = [(r, q) for r, q in modal_seventh_chords(tonic_pc, mode) if r == root]
+    for r, q in own:
+        if q.startswith("m") == minor:
             return r, q
-    return root, ("m7" if minor else "maj7")
+    if own:
+        return own[0]            # the mode's own chord on that root wins over the triad's major/minor spelling:
+    return root, ("m7" if minor else "maj7")     # a chroma major triad on a degree the mode makes minor is the tracker

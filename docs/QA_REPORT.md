@@ -15,7 +15,7 @@ All checks passed!
 
 ```
 $ pytest -q
-264 passed
+278 passed
 ```
 
 | File | Tests | Covers |
@@ -26,6 +26,7 @@ $ pytest -q
 | `test_integration.py` | 7 | synthetic song end to end: profile -> arrange -> MIDI (ranges, monophony, timing, determinism, forced lead / band) -> render -> mix (44.1 kHz stereo, finite, length, about -1.5 dBFS peak, fades, per-bar loudness follows source energy), render cache; render tests skip without FluidSynth and a soundfont |
 | `test_arranger.py` | 23 | theory primitives, chord DP, layer builders, fitness, search / repair determinism, instrumentation decision, per-song mood, Jazz Trio Database bass distribution and pianist lag |
 | `test_learning.py` | 21 | memory (records, feature vectors, similar songs, warm-start genomes, forget / ingest), feedback questions (parsing, scripted answers, skipping, interactive gate), remembered per-recording settings (tempo scale x0.5 / x2, lead, band), bounded preference nudges, scaled fitness weights, run recording from the pipeline, `--no-memory`, CLI |
+| `test_melodyline.py` | 14 | melody cleaning (merging, scale snapping with a context-aware target, rare pitch classes, ornament absorption, joining, the report) and melody-aware voicing (minor-ninth cost, weighting by how long a note sounds, in-scale shells, sixth chords under a melody on the root, suspension repairs) |
 | `test_band.py` | 17 | mode / raga detection (E Phrygian = Bhairavi, dorian, mixolydian, plain major / minor stay functional), modal chords, `MelodyMap`, fills, ride patterns, comping that dodges melody onsets and answers gaps, walking-line contour, drum-pattern variety, interplay fitness term, modal arranger context |
 | `test_hardware_logs.py` | 18 | nvidia-smi parsing, device choice (old GPU + CPU-only torch -> CPU with the reason, usable CUDA, too small / too old, unhonourable request, MPS), Demucs segment sizing, quality recommendation, fingerprint; unified log (events, tee, filters, run summary, tracebacks, moved workspace, CLI) |
 | `test_score.py` | 11 | sheet-music input: time maths, chord symbols, waltz / 6-8, pickup padding, chords estimated without symbols, part selection, tempo scale, MIDI, unsupported scans, stage artefacts, score -> arrangement end to end |

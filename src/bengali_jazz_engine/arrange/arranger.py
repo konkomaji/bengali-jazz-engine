@@ -32,7 +32,7 @@ from .. import config as cfg
 from .. import memory
 from ..analysis.profile import load_melody_notes
 from ..config import rng
-from . import interplay, modes
+from . import interplay, melodyline, modes
 from .progression import SHARP_PCS, reharmonize
 from .theory import (
     CHORD_SCALES,
@@ -178,6 +178,13 @@ class Context:
             for bi in range(s["start_bar"], s["end_bar"]):
                 self.section_of_bar[bi] = si
         self.source_offbeat = self._offbeat_share([n[1] for n in notes])
+        scale = {(self.modal["tonic"] + d) % 12 for d in modes.MODES[self.modal["mode"]]} if self.modal else None
+        if scale is None and profile.get("modal"):
+            m = profile["modal"]
+            scale = {(m["tonic"] + d) % 12 for d in modes.MODES[m["mode"]]}
+        self.scale_pcs = scale
+        self.notes, self.melody_report = melodyline.clean(self.notes, scale)   # the tune, not every tracked fragment
+        self.mel_notes = [self._window_notes(w) for w in self.windows]
         self.mm = interplay.MelodyMap(self.notes, self.bars, self.bpb)            # what the band hears the lead do
         self.weights = memory.scaled_weights(WEIGHTS) if memory.enabled() else dict(WEIGHTS)   # nudged by your feedback
 
@@ -211,6 +218,17 @@ class Context:
     def window_index(self, t):
         return min(max(bisect.bisect_right(self.window_starts, t) - 1, 0), len(self.windows) - 1)
 
+    def melody_pcs_between(self, t0, t1):
+        """{pitch class: seconds sounding} for the lead during [t0, t1): a held note must be cleared, a passing one
+        matters less."""
+        out = {}
+        for p, s, e, _v in self.notes:
+            overlap = min(e, t1) - max(s, t0)
+            if overlap > 0:
+                out[p % 12] = out.get(p % 12, 0.0) + overlap
+        top = max(out.values(), default=0.0)
+        return {pc: w / top for pc, w in out.items()} if top else {}
+
     def energy_at(self, bar):
         return self.bars[min(bar, len(self.bars) - 1)]["energy"]
 
@@ -225,6 +243,23 @@ class Context:
 # chord selection
 # ----------------------------------------------------------------------------
 
+def home_pull(ctx, i):
+    """How strongly window `i` wants the mode's own tonic chord: a section starts and ends at home. Returns
+    (tonic_chord, discount) - the discount is subtracted from that chord's deviation cost."""
+    if not ctx.modal:
+        return None, 0.0
+    tonic = (ctx.modal["tonic"], dict(modes.modal_seventh_chords(ctx.modal["tonic"], ctx.modal["mode"])).get(ctx.modal["tonic"], "m7"))
+    bar = ctx.windows[i]["bar"]
+    per_bar = 2 if ctx.bpb == 4 else 1
+    first = ctx.windows[i]["k"] == 0
+    for s in ctx.profile["sections"]:
+        if bar == s["start_bar"] and first:
+            return tonic, 1.2
+        if bar == s["end_bar"] - 1 and (ctx.windows[i]["k"] == per_bar - 1):
+            return tonic, 0.8
+    return tonic, 0.0
+
+
 def candidates_for(ctx, i):
     """[(chord, deviation_cost)] for window i."""
     orig = ctx.original[i]
@@ -232,8 +267,16 @@ def candidates_for(ctx, i):
     cands = {orig: 0.0}
     if ctx.modal:                       # modal tune: only chords made of the mode's own notes, no functional dominants
         scale = {(ctx.modal["tonic"] + d) % 12 for d in modes.MODES[ctx.modal["mode"]]}
+        home, discount = home_pull(ctx, i)
         for chord in modes.modal_seventh_chords(ctx.modal["tonic"], ctx.modal["mode"]):
-            cands.setdefault(chord, 1.1)
+            dev = 1.1
+            if chord[1] == "m7b5":
+                dev += 0.8                       # half-diminished is a passing colour, not a chord to rest on
+            if chord == home:
+                dev = max(0.0, dev - discount)
+            cands.setdefault(chord, dev)
+        if home and home in cands and discount:
+            cands[home] = max(0.0, cands[home] - discount)
         for q in QUALITIES:
             if chord_pcs((orig[0], q)) <= scale:
                 cands.setdefault((orig[0], q), 0.7)
@@ -272,8 +315,10 @@ def solve_chords(ctx, genome):
     cand = [candidates_for(ctx, i) for i in range(n)]
 
     def local(i, chord, dev):
+        # the melody decides the harmony: a chord a listener hears as wrong under the tune is not worth its
+        # faithfulness to the detected triad (a musician's verdict on an early render: "no chord sounds right")
         m = melody_cost(chord, ctx.mel_notes[i])
-        return 1.2 * m + dev * dev_mult
+        return 2.2 * m + dev * dev_mult
 
     best = [{c: (local(0, c, d), None) for c, d in cand[0]}]
     for i in range(1, n):
@@ -313,7 +358,7 @@ def repair_chords(ctx, genome, chords, skip=(), top_k=12, min_clash=1.0):
     out, touched = list(chords), []
     for i in order:
         def cost(c, i=i):
-            total = 1.2 * melody_cost(c, ctx.mel_notes[i]) + dev_mult * dict(candidates_for(ctx, i)).get(c, 1.5)
+            total = 2.2 * melody_cost(c, ctx.mel_notes[i]) + dev_mult * dict(candidates_for(ctx, i)).get(c, 1.5)
             if i > 0:
                 total += trans_cost(ctx, i, out[i - 1], c)
             if i + 1 < len(out):
@@ -341,6 +386,8 @@ def build_comping(ctx, chords, genome, r, groove=None):
     top = 66 if lead_is_piano else 70
     voicings, prev, changes = [], None, []
     groove = groove or interplay.Groove(r)   # the pianist sits about 10 ms behind the bass and drums (JTD) and drifts
+    # a slow or modal song is accompanied with shells (3rd + 7th): four-note voicings with tensions muddy a sung line
+    shells = ctx.tempo < 110 or bool(ctx.modal)
     horn = 0.75 if ctx.inst["lead"] != "piano" else 1.0
 
     def at(bar, beat):
@@ -354,7 +401,8 @@ def build_comping(ctx, chords, genome, r, groove=None):
 
     def hit(chord, t, dur, vel):
         nonlocal prev
-        v = choose_voicing(chord, prev, top_limit=top)
+        mel_pcs = ctx.melody_pcs_between(t, t + dur)          # what the lead sings over this chord
+        v = choose_voicing(chord, prev, top_limit=top, melody_pcs=mel_pcs, shells=shells, scale_pcs=ctx.scale_pcs)
         prev = v
         voicings.append(v)
         roll = 0.025
@@ -635,10 +683,21 @@ def build_lead(ctx, chords, genome, r, groove=None):
         if r.random() < genome["embellish"] * scale:
             n_graced += 1
             prev = processed[i - 1]
+            # a chromatic approach is jazz vocabulary, but a note outside a raga's scale is simply a wrong note:
+            # in a modal song the ornament steps through the mode instead
+            def approach(pitch, direction):
+                step = direction
+                if ctx.scale_pcs:
+                    for k in (1, 2, 3):
+                        if (pitch + k * direction) % 12 in ctx.scale_pcs:
+                            step = k * direction
+                            break
+                return pitch + step
+
             if n["end"] - n["start"] >= 0.6 and r.random() < 0.35:
-                seq = [(n["pitch"] + 2, 0.11, 0.06), (n["pitch"] - 1, 0.06, 0.005)]
+                seq = [(approach(n["pitch"], 2), 0.11, 0.06), (approach(n["pitch"], -1), 0.06, 0.005)]
             else:
-                seq = [(n["pitch"] + r.choice([-1, -1, 1]), 0.07, 0.005)]
+                seq = [(approach(n["pitch"], r.choice([-1, -1, 1])), 0.07, 0.005)]
             first_start = n["start"] - seq[0][1]
             if prev["end"] > first_start - 0.01:
                 prev["end"] = max(prev["start"] + 0.06, first_start - 0.005)
@@ -966,6 +1025,7 @@ def write_outputs(ctx, result):
     report = {
         "instrumentation": ctx.inst,
         "modal": ctx.modal,
+        "melody_cleaning": ctx.melody_report,
         "genome": result["genome"],
         "fitness": result["detail"],
         "search_history": result["history"],

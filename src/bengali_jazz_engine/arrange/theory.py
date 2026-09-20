@@ -311,18 +311,96 @@ def common_tones(a, b):
     return len({p % 12 for p in a} & {p % 12 for p in b})
 
 
-def choose_voicing(chord, previous, lo=50, hi=72, top_limit=None):
-    """Minimal-motion rootless voicing (alternates A/B automatically);
-    `top_limit` keeps comping under the melody."""
-    cands = rootless_candidates(chord, lo, hi)
+def shell_candidates(chord, lo=50, hi=72, scale_pcs=None):
+    """Shell voicings: the 3rd and 7th that define the chord, optionally with the 5th or the root under them. Two or
+    three notes cannot muddy a melody the way a four-note voicing with a 9th and a 13th can, which is why pianists
+    accompanying a singer play shells."""
+    root, quality = chord
+    third, fifth, seventh, _ninth = _degrees(quality)
+    shapes = [(third, seventh), (seventh, third + 12), (0, third, seventh), (third, seventh, fifth + 12)]
+    if quality in ("maj7", "m7"):
+        sixth = 9                                    # C6 / Cm6 instead of Cmaj7: no major seventh to sound a minor
+        shapes += [(third, sixth), (sixth, third + 12), (0, third, sixth)]    # ninth under a melody on the root
+    out = []
+    for shape in shapes:
+        if scale_pcs and not all((root + o) % 12 in scale_pcs for o in shape):
+            continue                             # a modal song: never accompany it with a note outside its own scale
+        for octave in range(2, 6):
+            notes = sorted(12 * octave + root + o for o in shape)
+            if notes[0] >= lo and notes[-1] <= hi:
+                out.append(notes)
+    return out
+
+
+MELODY_HEARD = 0.25      # a pitch class sounding less than this share of a chord's span is passing, not the melody
+
+
+def voice_around(voicing, melody_pcs, scale_pcs=None):
+    """Copies of `voicing` with a note that sounds a minor ninth under the melody moved onto the melody's own note.
+    That is what a pianist does with an avoid note: a melody F over a C chord makes the E into an F, and the chord
+    becomes a suspension instead of a clash. One variant per clashing melody note; empty when nothing needs repair."""
+    if not melody_pcs:
+        return []
+    weights = melody_pcs if isinstance(melody_pcs, dict) else dict.fromkeys(melody_pcs, 1.0)
+    out = []
+    for m, w in weights.items():
+        if w < MELODY_HEARD:
+            continue
+        repaired, done = [], False
+        for p in voicing:
+            if (m - p % 12) % 12 == 1 and not done and (not scale_pcs or (p + 1) % 12 in scale_pcs):
+                repaired.append(p + 1)
+                done = True
+            else:
+                repaired.append(p)
+        if done and len({p % 12 for p in repaired}) >= 2:
+            out.append(sorted(repaired))
+    return out
+
+
+def voicing_clash(voicing, melody_pcs):
+    """How badly a voicing fights the notes sounding above it. A chord tone a semitone *below* a melody note is a minor
+    ninth - the interval jazz voicing rules exist to avoid; a semitone the other way is milder but still muddy.
+    `melody_pcs` may be a set, or a {pitch class: weight} mapping so a long note counts more than a passing one."""
+    if not melody_pcs:
+        return 0.0
+    weights = melody_pcs if isinstance(melody_pcs, dict) else dict.fromkeys(melody_pcs, 1.0)
+    weights = {m: w for m, w in weights.items() if w >= MELODY_HEARD} or weights
+    chord_pcs_set = {p % 12 for p in voicing}
+    cost = 0.0
+    for m, w in weights.items():
+        for c in chord_pcs_set:
+            if (m - c) % 12 == 1:
+                cost += 1.0 * w                  # minor ninth: the harsh one
+            elif (c - m) % 12 == 1:
+                cost += 0.45 * w
+    return cost
+
+
+def choose_voicing(chord, previous, lo=50, hi=72, top_limit=None, melody_pcs=(), shells=False, scale_pcs=None):
+    """Voicing for one comp hit: smallest motion from `previous` that does not fight the melody sounding over it.
+    `melody_pcs` are the pitch classes the lead plays during the chord (optionally weighted by how long each sounds);
+    `shells` prefers two- and three-note shapes; `scale_pcs` keeps a modal song inside its own scale."""
+    cands = (shell_candidates(chord, lo, hi, scale_pcs) if shells else []) + rootless_candidates(chord, lo, hi)
+    for base in list(cands):
+        cands += voice_around(base, melody_pcs, scale_pcs)
     if top_limit is not None:
         under = [c for c in cands if max(c) <= top_limit]
         cands = under or cands
     if not cands:
-        cands = rootless_candidates(chord, lo - 6, hi + 6)
-    if previous is None:
-        return min(cands, key=lambda c: abs(sum(c) / len(c) - 60))
-    return min(cands, key=lambda c: voicing_motion(previous, c) - 0.3 * common_tones(previous, c))
+        cands = shell_candidates(chord, lo - 6, hi + 6) + rootless_candidates(chord, lo - 6, hi + 6)
+    if not cands:
+        return [12 * 4 + chord[0]]
+
+    thick = 0.5 if shells else 0.0        # accompanying a singer: two notes that fit beat four notes that nearly fit
+
+    def cost(c):
+        clash = 2.2 * voicing_clash(c, melody_pcs) + thick * max(0, len(c) - 2)
+        if previous is None:
+            return clash + abs(sum(c) / len(c) - 60) * 0.1
+        return clash + 0.35 * voicing_motion(previous, c) - 0.1 * common_tones(previous, c)
+
+    return min(cands, key=cost)
 
 
 def bass_note(pc, lo=28, hi=50):

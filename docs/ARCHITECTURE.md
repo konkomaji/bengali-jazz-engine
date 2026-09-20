@@ -50,6 +50,7 @@ stage range can be re-run alone.
 | `arrange/theory.py` | pure jazz theory: chord tones / scales, corpus-fitted note cost, swing math, ranges, rootless voicings |
 | `arrange/arranger.py` | genome, chord DP, comping / bass / drums / lead builders, fitness, search, local repair, MIDI + report |
 | `arrange/interplay.py` | `MelodyMap` (onsets, gaps, phrase ends, density) and the planners that make the band respond to the lead: comping slots, ride patterns, fills, bass walking lines |
+| `arrange/melodyline.py` | reduce the tracked vocal to the tune: merge repeats, snap out-of-scale glides, absorb ornaments, join held notes; reports what it removed |
 | `arrange/modes.py` | modal / raga-aware harmony: tonic + mode detection, the mode's seventh chords, modal original chords |
 | `arrange/progression.py` | key-aware triad -> 7th-chord mapping (`reharmonize`, `SHARP_PCS`); `build` / `run` (progression.json) are legacy |
 | `render/vst.py` | role -> backend map (`vst.json`), VST3 / SFZ (sfizz_render) / SF2 rendering, sfizz state patching, `block_size` |
@@ -220,6 +221,13 @@ phrase-level structure (variety between 0.3 and 0.8, not a loop and not noise) a
 Horn lead: notes are shifted 28 ms early (`HORN_ATTACK_LEAD`, the measured attack of the tenor SFZ) so the audible onset lands on the beat, slow drift replaces
 per-note random jitter, grace notes become pitch-bend scoops (no fragments), notes under 0.11 s are lengthened or dropped, and octave fitting moves whole phrases
 (`theory.fit_phrases`) instead of folding single notes, which used to break the contour of a phrase.
+
+Melody and voicing (after a musician's review of an early render - "the tune itself isn't there", "no chord sounds right"):
+`melodyline.clean` runs inside `Context` on the melody the arranger uses (the raw transcription stays on disk), and `choose_voicing` now takes the
+pitch classes the lead sounds over each chord, weighted by how long each sounds. It prefers shells, refuses voicings that put a chord tone a semitone
+under a melody note, offers `voice_around` repairs that turn an avoid note into a suspension, and stays inside the mode's scale for a modal song. The
+chord solver weights melody fit 2.2 (was 1.2), pulls toward the mode's tonic chord at section starts and ends, and treats m7b5 as a passing colour.
+Measured on the two Bengali recordings: melody notes sounding a semitone against the comping fell from 46% to 11% and 6%, minor ninths to 2% and 1%.
 
 Band interplay and modal harmony: see `docs/RESEARCH.md`. The interplay fitness term (weight 0.11) is hand-set; the drum, comping and bass
 planners are rule-based (variety, dodging melody onsets, answering gaps), checked by tests and by measurement on rendered arrangements
