@@ -8,8 +8,9 @@ from bengali_jazz_engine import pipeline
 
 
 def test_select_steps_ranges_and_master_rule():
-    assert pipeline.select_steps() == list(pipeline.STEP_KEYS[:-1])                 # master only with a reference
-    assert pipeline.select_steps(reference="r.wav") == list(pipeline.STEP_KEYS)
+    audio_steps = [k for k in pipeline.STEP_KEYS if k != "score"]
+    assert pipeline.select_steps() == audio_steps[:-1]                              # master only with a reference
+    assert pipeline.select_steps(reference="r.wav") == audio_steps
     assert pipeline.select_steps(start="arrange", stop="mix") == ["arrange", "render", "mix"]
     assert pipeline.select_steps(only="render") == ["render"]
     assert pipeline.select_steps(start="mix", stop="master") == ["mix", "master"]

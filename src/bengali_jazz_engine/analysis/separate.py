@@ -1,12 +1,18 @@
 """Stage 1 - stem separation via demucs (fine-tuned htdemucs_ft by default)."""
 import subprocess
 import sys
-from pathlib import Path
 
+from .. import hardware
 from ..config import cache_store, cache_valid, file_sha256, find_input_audio
 from .. import config as cfg
 
 STEM_NAMES = ("vocals", "bass", "drums", "other")
+
+
+def demucs_command(audio, device):
+    """The Demucs command line for `device`, with memory-safe extras chosen from the detected hardware."""
+    return [sys.executable, "-m", "demucs", "-n", cfg.DEMUCS_MODEL, "--shifts", str(cfg.setting("demucs_shifts")),
+            "-d", device, *hardware.demucs_extra_args(hardware.detect(), device), "-o", str(cfg.STEMS_DIR), str(audio)]
 
 
 def run():
@@ -18,12 +24,15 @@ def run():
         print(f"Cached stems: {stem_dir}")
         return stem_dir
 
-    print(f"Separating stems for {audio.name} with {cfg.DEMUCS_MODEL}")
-    subprocess.run(
-        [sys.executable, "-m", "demucs", "-n", cfg.DEMUCS_MODEL, "--shifts", str(cfg.setting("demucs_shifts")), "-d", cfg.resolve_device(),
-         "-o", str(cfg.STEMS_DIR), str(audio)],
-        check=True,
-    )
+    device = cfg.resolve_device()
+    print(f"Separating stems for {audio.name} with {cfg.DEMUCS_MODEL} on {device} ({cfg.device_reason()})")
+    try:
+        subprocess.run(demucs_command(audio, device), check=True)
+    except subprocess.CalledProcessError:
+        if device == "cpu":
+            raise
+        print(f"WARNING: Demucs failed on {device} (out of memory or driver problem); retrying on the CPU")
+        subprocess.run(demucs_command(audio, "cpu"), check=True)
     for f in stems:
         if not f.exists():
             raise FileNotFoundError(f"Expected stem missing: {f}")

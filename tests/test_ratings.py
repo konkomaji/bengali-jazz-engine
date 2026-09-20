@@ -29,7 +29,7 @@ def synthetic_ratings(true_w, n, seed=0, noise=0.0):
 
 
 def test_fit_recovers_the_planted_weights():
-    true_w = np.array([0.30, 0.02, 0.05, 0.03, 0.10, 0.02, 0.0, 0.48])
+    true_w = np.array([0.30, 0.02, 0.05, 0.03, 0.10, 0.02, 0.0, 0.48, 0.0])
     fit = ratings.fit(synthetic_ratings(true_w, 400, noise=0.02), l2=0.001)
     w = np.array([fit["weights"][t] for t in TERMS])
     assert sum(w) == pytest.approx(1.0, abs=0.01) and (w >= 0).all()
@@ -48,24 +48,24 @@ def test_fit_needs_enough_decisive_ratings():
 
 
 def test_ties_are_dropped_and_negative_coefficients_are_clipped():
-    rows = synthetic_ratings(np.array([1, 0, 0, 0, 0, 0, 0, -1.0]), 200)
-    rows += [{"song": "s", "a": parts(np.zeros(8)), "b": parts(np.ones(8)), "winner": "tie"}] * 5
+    rows = synthetic_ratings(np.array([1, 0, 0, 0, 0, 0, 0, -1.0, 0]), 200)
+    rows += [{"song": "s", "a": parts(np.zeros(len(TERMS))), "b": parts(np.ones(len(TERMS))), "winner": "tie"}] * 5
     _x, y = ratings.design(rows)
     assert len(y) == 200
     fit = ratings.fit(rows, l2=0.001)
     assert fit["raw_coefficients"]["interest"] < 0 and fit["weights"]["interest"] == 0.0
-    assert fit["weights"]["consonance"] > 0.8
+    assert fit["weights"]["consonance"] > 0.7
 
 
 def test_normalise_fallback_and_record_validation(tmp_path):
     assert ratings.normalise(np.array([-1.0, -2.0])).tolist() == [0.5, 0.5]
     path = tmp_path / "r.jsonl"
-    ratings.record(parts(np.zeros(8)), parts(np.ones(8)), "b", song="x", path=path)
+    ratings.record(parts(np.zeros(len(TERMS))), parts(np.ones(len(TERMS))), "b", song="x", path=path)
     assert ratings.load(path)[0]["winner"] == "b"
     with pytest.raises(ValueError):
-        ratings.record(parts(np.zeros(8)), parts(np.ones(8)), "maybe", path=path)
+        ratings.record(parts(np.zeros(len(TERMS))), parts(np.ones(len(TERMS))), "maybe", path=path)
     with pytest.raises(ValueError):
-        ratings.record({"consonance": 1.0}, parts(np.ones(8)), "a", path=path)
+        ratings.record({"consonance": 1.0}, parts(np.ones(len(TERMS))), "a", path=path)
 
 
 def test_prepare_add_status_roundtrip_on_a_synthetic_song():

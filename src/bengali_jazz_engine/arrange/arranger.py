@@ -29,15 +29,19 @@ import numpy as np
 import pretty_midi
 
 from .. import config as cfg
+from .. import memory
 from ..analysis.profile import load_melody_notes
 from ..config import rng
+from . import interplay, modes
 from .progression import SHARP_PCS, reharmonize
 from .theory import (
+    CHORD_SCALES,
     GM_PROGRAM,
     RANGES,
     bass_count_probs,
     bass_note,
     choose_voicing,
+    chord_pcs,
     common_tones,
     fit_to_range,
     harmonic_rhythm_target,
@@ -65,7 +69,7 @@ BASS_FEELS = ("auto", "two", "walk")
 VIBRATO_HZ = {"tenor_sax": 5.0, "alto_sax": 6.0, "soprano_sax": 6.0}
 VIBRATO_CENTS = 35.0
 
-KICK, SNARE, HIHAT_PEDAL, RIDE, TOM_LO, TOM_MID = 36, 38, 44, 51, 45, 47
+KICK, SNARE, HIHAT_PEDAL, RIDE, TOM_LO, TOM_MID, CRASH = 36, 38, 44, 51, 45, 47, 49
 
 BOUNDS = {"reharm": (0.0, 1.0), "embellish": (0.0, 0.3), "swing_amt": (0.6, 1.0),
           "behind_ms": (15.0, 40.0), "comp_density": (0.5, 1.4)}
@@ -96,7 +100,8 @@ _load_fitted()
 WEIGHTS = {"consonance": HARMONY_POOL * _FITTED_SPLIT["consonance"],
            "plausibility": HARMONY_POOL * _FITTED_SPLIT["plausibility"],
            "change_rate": HARMONY_POOL * _FITTED_SPLIT["change_rate"],
-           "voice_leading": 0.14, "faithfulness": 0.22, "dynamics": 0.10, "texture": 0.10, "interest": 0.08}
+           "voice_leading": 0.11, "faithfulness": 0.19, "dynamics": 0.09, "texture": 0.09, "interest": 0.05,
+           "interplay": 0.11}
 
 
 def _load_rated():
@@ -159,14 +164,22 @@ class Context:
                 self.windows.append({"bar": i, "k": k, "start": b["start_sec"] + k * step,
                                      "end": b["start_sec"] + (k + 1) * step})
         self.window_starts = [w["start"] for w in self.windows]
-        self.original = [parse_symbol(reharmonize(self.bars[w["bar"]]["chord_guess"], self.tonic, self.mode)[0])
-                         for w in self.windows]
+        modal = profile.get("modal")
+        self.modal = modal if (profile.get("modal_active") and modal) else None      # raga / mode aware harmony
+        if self.modal:
+            self.original = [modes.modal_original(self.bars[w["bar"]]["chord_guess"], self.modal["tonic"], self.modal["mode"])
+                             for w in self.windows]
+        else:
+            self.original = [parse_symbol(reharmonize(self.bars[w["bar"]]["chord_guess"], self.tonic, self.mode)[0])
+                             for w in self.windows]
         self.mel_notes = [self._window_notes(w) for w in self.windows]
         self.section_of_bar = {}
         for si, s in enumerate(profile["sections"]):
             for bi in range(s["start_bar"], s["end_bar"]):
                 self.section_of_bar[bi] = si
         self.source_offbeat = self._offbeat_share([n[1] for n in notes])
+        self.mm = interplay.MelodyMap(self.notes, self.bars, self.bpb)            # what the band hears the lead do
+        self.weights = memory.scaled_weights(WEIGHTS) if memory.enabled() else dict(WEIGHTS)   # nudged by your feedback
 
     # melody notes weighted by duration inside the window and by beat strength
     def _window_notes(self, w):
@@ -217,6 +230,14 @@ def candidates_for(ctx, i):
     orig = ctx.original[i]
     nxt = ctx.original[i + 1] if i + 1 < len(ctx.original) else orig
     cands = {orig: 0.0}
+    if ctx.modal:                       # modal tune: only chords made of the mode's own notes, no functional dominants
+        scale = {(ctx.modal["tonic"] + d) % 12 for d in modes.MODES[ctx.modal["mode"]]}
+        for chord in modes.modal_seventh_chords(ctx.modal["tonic"], ctx.modal["mode"]):
+            cands.setdefault(chord, 1.1)
+        for q in QUALITIES:
+            if chord_pcs((orig[0], q)) <= scale:
+                cands.setdefault((orig[0], q), 0.7)
+        return list(cands.items())
     diatonic = MINOR_DIATONIC if ctx.mode == "minor" else MAJOR_DIATONIC
     for degree, q in diatonic:
         cands.setdefault(((ctx.tonic + degree) % 12, q), 1.1)
@@ -236,7 +257,7 @@ def trans_cost(ctx, i, prev, cur):
     trans = 0.05 if ctx.original[i] != ctx.original[i - 1] else 0.25
     emp = transition_cost(prev, cur)          # iReal-corpus surprise vs the likeliest move
     if emp is not None:
-        trans += 0.2 * min(emp, 5.0)
+        trans += (0.05 if ctx.modal else 0.2) * min(emp, 5.0)     # jazz-standard surprise means little in a modal tune
     elif (prev[0] - cur[0]) % 12 == 7:
         trans -= 0.3                          # fallback: down a fifth
     if ctx.windows[i]["k"] == 1:
@@ -349,39 +370,20 @@ def build_comping(ctx, chords, genome, r):
         c1 = chords[w0 + 1] if ctx.bpb == 4 else c0
         bl = (b["end_sec"] - b["start_sec"]) / ctx.bpb
         energy = ctx.energy_at(bar_i)
-        vel = 50 + 24 * energy
-        density = genome["comp_density"] * horn
-        style = genome["comp_style"]
-        changed_mid = c1 != c0
+        vel = (50 + 24 * energy) * (1.0 - 0.18 * ctx.mm.lightness(bar_i))       # step back while the melody is busy
         bar_end = b["end_sec"]
-
-        events = []  # (beat, chord, length_in_beats)
-        if style == "ballad":
-            events.append((0.0, c0, ctx.bpb if not changed_mid else 2))
-            if changed_mid:
-                events.append((2.0, c1, 2))
-            elif energy * density > 0.55 and ctx.bpb == 4:
-                events.append((2.0, c0, 2))
-        elif style == "charleston":
-            events.append((0.0, c0, 1.5))
-            if energy * density > 0.3:
-                events.append((1.5, c0, 1.0))
-            if changed_mid:
-                events.append((2.0, c1, 1.5))
-            elif energy * density > 0.65 and ctx.bpb == 4:
-                events.append((2.5, c0, 1.0))
-        else:  # sparse
-            n_hits = int(np.clip(round(1 + 2 * energy * density), 1, 3))
-            slots = [(0.0, c0, 1.5), (2.5, c1, 1.0), (1.5, c0, 1.0)]
-            events.extend(slots[:n_hits])
-            if changed_mid and all(e[0] < 2.0 for e in events):
-                events.append((2.0, c1, 1.5))
-        for beat, chord, length in sorted(events, key=lambda e: e[0]):
-            if beat >= ctx.bpb:      # slots written for 4/4 must not spill into the next bar
+        # the band listens to the lead: chords land in the melody gaps and between its notes (interplay.py)
+        hits = interplay.plan_comping(genome["comp_style"], bar_i, ctx.mm, energy, genome["comp_density"] * horn, r)
+        if c1 != c0 and all(h[0] < 4 for h in hits) and ctx.bpb == 4:
+            hits.append((4, 3, 0.85))                                             # the new chord must be stated
+        for slot, length8, weight in sorted(hits):
+            beat = slot / 2.0
+            if beat >= ctx.bpb:
                 continue
+            chord = c1 if (ctx.bpb == 4 and slot >= 4) else c0
             t = at(bar_i, beat)
-            dur = min(length * bl * 0.95, bar_end - t + bl)
-            hit(chord, t, dur, vel)
+            dur = min(length8 / 2.0 * bl * 0.95, bar_end - t + bl)
+            hit(chord, t, dur, vel * weight)
             if chord != pedal_prev:
                 changes.append(t)
                 pedal_prev = chord
@@ -412,6 +414,8 @@ def build_bass(ctx, chords, genome, r):
         if counts:
             n_on = r.choices(range(len(counts)), weights=counts)[0]
             play = (0, 2) if n_on <= 2 else ((0, 2, 3) if n_on == 3 else (0, 1, 2, 3))
+            if ctx.energy_at(bar_i) < 0.28 and r.random() < 0.5:
+                play = (0, 2)                                     # a quiet passage: the bass breathes in two
             bar_two_feel = play == (0, 2)
         else:
             # FiloBass: ~63% of walking bars are four quarters, the rest use longer notes
@@ -439,9 +443,10 @@ def build_bass(ctx, chords, genome, r):
                 target = bass_note(next_chord[0])
                 pitch = target + r.choices([1, -1, -2], weights=[26.75, 20.97, 11.90])[0]
             else:
-                tones = [(root_pc + 7) % 12, (root_pc + (3 if chord[1].startswith("m") else 4)) % 12, (root_pc + 7) % 12]
-                pc_pick = tones[(beat + bar_i) % 3]
-                pitch = bass_note(pc_pick)
+                # a walking line with contour: scale steps from the previous note toward the next chord root
+                scale = {(root_pc + d) % 12 for d in CHORD_SCALES[chord[1]]}
+                start = prev_pitch if prev_pitch is not None else bass_note(root_pc)
+                pitch = interplay.walk_line(scale, start, bass_note(next_chord[0]), 2, r)[1]
             if prev_pitch is not None:  # keep motion stepwise-ish: nearest octave
                 while pitch - prev_pitch > 9:
                     pitch -= 12
@@ -457,34 +462,74 @@ def build_bass(ctx, chords, genome, r):
 
 
 def build_drums(ctx, genome, r):
+    """Ride, hi-hat foot, feathered kick and snare that respond to the lead: the ride pattern changes from bar to bar
+    and lightens under a busy melody, kick and rim hits lock to the melody accents, phrase-end gaps get fills, and
+    section starts get a crash (interplay.py)."""
     inst = pretty_midi.Instrument(program=GM_PROGRAM["brush_kit"] if ctx.tempo < 90 else 0,
                                   is_drum=True, name="drums")
     swing = swing_offbeat_fraction(ctx.tempo, genome["swing_amt"])
-    section_ends = {s["end_bar"] - 1 for s in ctx.profile["sections"]}
+    mm = ctx.mm
+    sections = ctx.profile["sections"]
+    section_ends = {s["end_bar"] - 1 for s in sections}
+    section_starts = {s["start_bar"] for s in sections if s["start_bar"] > 0}
 
     def add(pitch, t, vel, dur=0.09):
         inst.notes.append(pretty_midi.Note(velocity=int(np.clip(vel, 15, 110)), pitch=pitch,
                                            start=max(0.0, t + _gauss(r, 0.007)), end=max(0.0, t) + dur))
 
+    prev_pat = None
+    mean_bar = float(np.mean([b["end_sec"] - b["start_sec"] for b in ctx.bars]))
+    phrase_fills = []                                                   # a fill in each breath, wherever the bar lines fall
+    for g0, g1 in mm.gaps:
+        if g1 - g0 >= 0.5 and any(abs(g0 - pe) < 0.02 for pe in mm.phrase_ends) and r.random() < 0.8:
+            phrase_fills.append((g0 + 0.04, min(g1 - 0.03, g0 + 1.25 * mean_bar), False))
     for bar_i, b in enumerate(ctx.bars):
         bl = (b["end_sec"] - b["start_sec"]) / ctx.bpb
+        a0, a1 = b["start_sec"], b["end_sec"]
         energy = ctx.energy_at(bar_i)
-        level = 0.6 + 0.6 * energy
-        for beat in range(ctx.bpb):
-            t = b["start_sec"] + beat * bl
-            add(RIDE, t, (85 if beat % 2 == 1 else 68) * level)
-            if beat % 2 == 1 or ctx.bpb == 3:
-                add(RIDE, t + swing * bl, 60 * level)        # the "a" of 2 and 4
-            if beat % 2 == 1:
-                add(HIHAT_PEDAL, t - 0.015, 64)
-            if r.random() < 0.7:
-                add(KICK, t, r.randint(20, 35))              # feathered
-            if r.random() < 0.12:
-                add(SNARE, t + swing * bl, r.randint(25, 40))  # ghost note
-        if bar_i in section_ends and ctx.bpb == 4:           # fill into the next section
-            add(SNARE, b["start_sec"] + 3 * bl, 60 * level)
-            add(TOM_MID, b["start_sec"] + (3 + swing) * bl, 66 * level)
-            add(TOM_LO, b["start_sec"] + 3.75 * bl, 72 * level)
+        light = mm.lightness(bar_i)
+        level = (0.6 + 0.6 * energy) * (1.0 - 0.2 * light)
+        pat = interplay.choose_ride_pattern(prev_pat, light, energy, r)
+        prev_pat = pat
+
+        fills = [f for f in phrase_fills if a0 <= f[0] < a1]           # fills that start in this bar (may run into the next)
+        if bar_i in section_ends and ctx.bpb == 4:
+            fills.append((a0 + 3 * bl, a1, True))                       # the turnaround into the next section
+
+        def free(t, fills=fills, earlier=phrase_fills):
+            return not any(f0 < t < f1 for f0, f1, _big in [*fills, *earlier])
+
+        if ctx.bpb == 4:
+            ride = [(s, 85 if s in (2, 6) else (60 if s % 2 else 68)) for s in interplay.RIDE_PATTERNS[pat]]
+        else:
+            ride = [(2 * k, 85 if k % 2 else 68) for k in range(ctx.bpb)]
+            ride += [(2 * k + 1, 60) for k in range(ctx.bpb) if k % 2 == 1 or ctx.bpb == 3]
+        for slot, vel in ride:
+            t = a0 + (slot // 2) * bl + (swing * bl if slot % 2 else 0.0)
+            if free(t):
+                add(RIDE, t, vel * level)
+        for k in range(1, ctx.bpb, 2):
+            add(HIHAT_PEDAL, a0 + k * bl - 0.015, 64)                    # foot on 2 and 4
+        for k in range(ctx.bpb):
+            if r.random() < (0.8 if k == 0 else 0.4) and free(a0 + k * bl):
+                add(KICK, a0 + k * bl, r.randint(20, 35))               # feathered
+        onsets = mm.onset_slots(bar_i)
+        for t_acc, _slot in mm.accents(bar_i):                           # hit with the melody accents
+            if free(t_acc) and r.random() < 0.2 + 0.35 * energy:
+                if r.random() < 0.5:
+                    add(KICK, t_acc, r.randint(50, 72) * (0.8 + 0.3 * level))
+                else:
+                    add(SNARE, t_acc, r.randint(34, 52))
+        for slot in range(1, ctx.bpb * 2, 2):                            # ghost notes only where the melody is silent
+            t = a0 + (slot // 2) * bl + swing * bl
+            if slot not in onsets and free(t) and r.random() < 0.10 * (1.0 - light):
+                add(SNARE, t, r.randint(25, 40))
+        for f0, f1, big in fills:
+            kinds = {"snare": SNARE, "tom_mid": TOM_MID, "tom_lo": TOM_LO}
+            for t, kind, scale in interplay.fill_hits(f0, f1, r, big):
+                add(kinds[kind], t, 66 * level * scale)
+        if bar_i in section_starts and r.random() < 0.8:
+            add(CRASH, a0, 80 * level, dur=0.6)
     return inst
 
 
@@ -636,6 +681,38 @@ def _tri(x, lo, hi, width):
     return float(max(0.0, 1.0 - (lo - x if x < lo else x - hi) / width))
 
 
+def interplay_score(ctx, arr):
+    """0..1: does the band converse with the lead? Bar-to-bar variety of the drum pattern, comping that dodges the
+    melody onsets, and answers (a drum or comp hit) inside the melody's long rests."""
+    mm = ctx.mm
+    n_bars = len(ctx.bars)
+    starts = [b["start_sec"] for b in ctx.bars]
+    sigs = [set() for _ in range(n_bars)]
+    drum_t = []
+    for n in arr["drums"].notes:
+        k = int(np.clip(bisect.bisect_right(starts, n.start) - 1, 0, n_bars - 1))
+        sigs[k].add((n.pitch, mm.slot_of(n.start, k)))
+        drum_t.append(n.start)
+    variety = len({frozenset(s) for s in sigs}) / max(1, n_bars)
+    lead_on = np.array(sorted(mm.starts))
+    comp_on = sorted({round(n.start, 2) for n in arr["comp"].notes})
+    bar_starts = np.array(starts)
+    clash = total = 0
+    for t in comp_on:
+        if lead_on.size and np.min(np.abs(bar_starts - t)) > 0.06:            # bar downbeats may coincide with the melody
+            total += 1
+            clash += bool(np.min(np.abs(lead_on - t)) < 0.045)
+    dodge = 1.0 - (clash / total if total else 0.0)
+    answered = long_gaps = 0
+    hits = np.array(sorted(drum_t + [n.start for n in arr["comp"].notes]))
+    for g0, g1 in mm.gaps:
+        if g1 - g0 >= 0.5:
+            long_gaps += 1
+            answered += bool(hits.size and np.any((hits > g0) & (hits < g1)))
+    response = answered / long_gaps if long_gaps else 1.0
+    return float(0.4 * min(1.0, variety / 0.6) + 0.3 * dodge + 0.3 * response)
+
+
 def evaluate(ctx, arr):
     chords, n_win = arr["chords"], len(arr["chords"])
 
@@ -707,9 +784,12 @@ def evaluate(ctx, arr):
     plaus_cost = float(np.mean(trans)) if trans else 0.0
     plausibility = 1.0 - min(1.0, plaus_cost / _PLAUS_SCALE)
 
+    inter = interplay_score(ctx, arr)
     parts = {"consonance": consonance, "plausibility": plausibility, "voice_leading": voice_leading, "faithfulness": faith,
-             "dynamics": dynamics, "texture": texture, "change_rate": change_rate, "interest": interest}
-    score = sum(WEIGHTS[k] * parts[k] for k in WEIGHTS)
+             "dynamics": dynamics, "texture": texture, "change_rate": change_rate, "interest": interest,
+             "interplay": inter}
+    weights = getattr(ctx, "weights", WEIGHTS)
+    score = sum(weights[k] * parts[k] for k in weights)
     detail = {"score": round(score, 4), **{k: round(v_, 3) for k, v_ in parts.items()},
               "melody_clash_cost": round(cons_cost, 3), "mean_voicing_motion": round(motion, 2),
               "substitution_rate": round(sub_rate, 3), "chord_changes_per_bar": round(rate, 2),
@@ -745,11 +825,34 @@ def crossover(a, b, r):
     return {k: (a[k] if r.random() < 0.5 else b[k]) for k in a}
 
 
+def biased(genome, bias):
+    """`genome` shifted by the learned preference bias, kept inside BOUNDS."""
+    out = dict(genome)
+    for k, d in bias.items():
+        if k in BOUNDS:
+            lo, hi = BOUNDS[k]
+            out[k] = float(np.clip(out[k] + d, lo, hi))
+    return out
+
+
+def _seed_genomes(ctx):
+    """Genomes of good past runs of similar songs (memory.py), injected into the first generation."""
+    if not memory.enabled():
+        return []
+    from pathlib import Path
+
+    src = cfg.OVERRIDES.get("input")
+    sha = cfg.file_sha256(Path(src)) if src and Path(src).exists() else None
+    return memory.warm_start_genomes(ctx.profile, sha)
+
+
 def optimize(ctx, pop_size=None, generations=None, log=print):
     pop_size = pop_size or cfg.setting("pop_size")
     generations = generations or cfg.setting("generations")
     r = rng("arranger-search")
-    pop = [dict(DEFAULT_GENOME)] + [random_genome(r) for _ in range(pop_size - 1)]
+    bias = memory.genome_bias() if memory.enabled() else {}
+    seeds = _seed_genomes(ctx)
+    pop = ([biased(DEFAULT_GENOME, bias)] + seeds + [biased(random_genome(r), bias) for _ in range(pop_size)])[:pop_size]
     cache, history = {}, []
 
     def fit(g):
@@ -810,6 +913,7 @@ def write_outputs(ctx, result):
     chords = [symbol(c) for c in arr["chords"]]
     report = {
         "instrumentation": ctx.inst,
+        "modal": ctx.modal,
         "genome": result["genome"],
         "fitness": result["detail"],
         "search_history": result["history"],

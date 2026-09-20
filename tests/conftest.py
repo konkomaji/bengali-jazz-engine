@@ -1,7 +1,7 @@
 """Every test runs in its own throw-away workspace, so nothing touches the real repo directories."""
 import pytest
 
-from bengali_jazz_engine import config
+from bengali_jazz_engine import config, logs
 
 
 @pytest.fixture(autouse=True)
@@ -13,6 +13,7 @@ def _isolated_workspace(tmp_path, monkeypatch):
     config.use_song(None)
     config.set_per_song(True)
     yield
+    logs.shutdown()
     root, song, per_song, seed, model, overrides, settings = saved
     config.set_root(root)
     config.use_song(song)

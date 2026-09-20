@@ -15,7 +15,7 @@ All checks passed!
 
 ```
 $ pytest -q
-189 passed
+256 passed
 ```
 
 | File | Tests | Covers |
@@ -25,6 +25,10 @@ $ pytest -q
 | `test_pipeline.py` | 11 | stage ranges and the master rule, option plumbing, stage order and per-song workdir with stubbed stages, `--only render` reading the band from the report, batch failure isolation, `--force`, per-song paths, quality presets, manifest |
 | `test_integration.py` | 7 | synthetic song end to end: profile -> arrange -> MIDI (ranges, monophony, timing, determinism, forced lead / band) -> render -> mix (44.1 kHz stereo, finite, length, about -1.5 dBFS peak, fades, per-bar loudness follows source energy), render cache; render tests skip without FluidSynth and a soundfont |
 | `test_arranger.py` | 23 | theory primitives, chord DP, layer builders, fitness, search / repair determinism, instrumentation decision, per-song mood, Jazz Trio Database bass distribution and pianist lag |
+| `test_learning.py` | 21 | memory (records, feature vectors, similar songs, warm-start genomes, forget / ingest), feedback questions (parsing, scripted answers, skipping, interactive gate), remembered per-recording settings (tempo scale x0.5 / x2, lead, band), bounded preference nudges, scaled fitness weights, run recording from the pipeline, `--no-memory`, CLI |
+| `test_band.py` | 17 | mode / raga detection (E Phrygian = Bhairavi, dorian, mixolydian, plain major / minor stay functional), modal chords, `MelodyMap`, fills, ride patterns, comping that dodges melody onsets and answers gaps, walking-line contour, drum-pattern variety, interplay fitness term, modal arranger context |
+| `test_hardware_logs.py` | 18 | nvidia-smi parsing, device choice (old GPU + CPU-only torch -> CPU with the reason, usable CUDA, too small / too old, unhonourable request, MPS), Demucs segment sizing, quality recommendation, fingerprint; unified log (events, tee, filters, run summary, tracebacks, moved workspace, CLI) |
+| `test_score.py` | 11 | sheet-music input: time maths, chord symbols, waltz / 6-8, pickup padding, chords estimated without symbols, part selection, tempo scale, MIDI, unsupported scans, stage artefacts, score -> arrangement end to end |
 | `test_ratings.py` | 8 | listener-rating fit recovers a planted preference vector, ties / negative coefficients / minimum-ratings rules, candidates roundtrip (`rate prepare` / `add` / `status`), rated weights loading, CLI |
 | `test_fit_jtd.py` | 4 | Jazz Trio Database fitting on a synthetic annotation folder: bar statistics, planted asynchrony and bass counts, meter filter, outlier rejection |
 | `test_meter_audio.py` | 4 | multiple-of-meter margin rule; FluidSynth-rendered 4/4, 3/4 and 6/8 pieces through the real beat_this tracker and the bar-line check (skips without beat_this / FluidSynth) |
@@ -45,7 +49,7 @@ waltz was re-read as 6/4 because the doubled meter's bar-line contrast is inflat
 passed the old 1.2x rule; multiples and divisors of the tracked meter now need 1.6x).
 
 The light CI environment (no pedalboard, matchering, pandas, demucs, beat_this) was simulated locally by blocking those
-imports: 181 passed, 8 skipped (the ones needing pedalboard, pandas, beat_this or FluidSynth).
+imports: 248 passed, 8 skipped (the ones needing pedalboard, pandas, beat_this or FluidSynth).
 
 ## Performance and equivalence checks (one 4:40 song, 4 cores, no GPU, stems cached)
 

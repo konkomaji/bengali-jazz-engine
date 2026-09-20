@@ -17,6 +17,7 @@ import numpy as np
 import pretty_midi
 from ..config import find_input_audio
 from .. import config as cfg
+from ..arrange import modes
 
 SAD = {"melancholic", "longing", "nostalgic", "romantic"}
 CALM = {"devotional", "contemplative"}
@@ -137,6 +138,9 @@ def build_profile(estimate, notes, saved_mood=None):
         "mood_source": mood_src,
         "sections": segment_sections(bars),
     }
+    modal = modes.detect_mode(notes)
+    profile["modal"] = modal
+    profile["modal_active"] = bool(modes.is_modal(modal))
     profile["instrumentation"] = decide_instrumentation(profile)
     return profile
 

@@ -19,6 +19,7 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 PACKAGE_DATA = PACKAGE_DIR / "data"          # derived statistics shipped with the package
 
 AUDIO_EXTS = (".wav", ".mp3", ".flac", ".m4a")
+SCORE_EXTS = (".musicxml", ".mxl", ".xml", ".mid", ".midi", ".abc", ".krn")   # sheet music / MIDI instead of a recording
 SOUNDFONT_CANDIDATES = ("MuseScore_General.sf2", "GeneralUser_GS.sf2", "FluidR3_GM.sf2")
 MOOD_KEYWORDS = (
     "devotional", "contemplative", "melancholic", "romantic", "longing",
@@ -43,6 +44,7 @@ TOOLS_DIR: Path
 OUTPUT_DIR: Path
 DATA_DIR: Path            # raw corpora (wjazzd.db, JazzStandards.json) live here
 WORK_DIR: Path
+LOG_DIR: Path
 ANALYSIS_DIR: Path
 MIDI_DIR: Path
 RENDER_DIR: Path
@@ -63,6 +65,8 @@ SETTINGS = {
     "device": os.environ.get("BENGALI_JAZZ_DEVICE", "auto"),
     "jobs": int(os.environ.get("BENGALI_JAZZ_JOBS", "0")),   # 0 -> min(4, cpu count)
     "lead": None,                # force a lead instrument (piano / tenor_sax / alto_sax)
+    "score_part": None,          # sheet-music input: melody part (name fragment or index)
+    "memory": True,              # learn from past runs and feedback (memory.py)
 }
 
 # Manual analysis overrides (CLI --meter / --tempo-scale, or env). meter: beats per bar;
@@ -104,12 +108,13 @@ def _apply_song_dirs() -> None:
 def set_root(root) -> None:
     """Point the whole workspace at `root` (input/, stems/, work/, output/, soundfonts/, tools/, data/)."""
     global ROOT, INPUT_DIR, STEMS_DIR, BASE_ANALYSIS_DIR, SOUNDFONT_DIR, TOOLS_DIR, OUTPUT_DIR, DATA_DIR
-    global WORK_DIR, SOUNDFONT
+    global WORK_DIR, SOUNDFONT, LOG_DIR
     ROOT = Path(root).resolve()
     INPUT_DIR, STEMS_DIR = ROOT / "input", ROOT / "stems"
     BASE_ANALYSIS_DIR, WORK_DIR = ROOT / "analysis", ROOT / "work"
     SOUNDFONT_DIR, TOOLS_DIR = ROOT / "soundfonts", ROOT / "tools"
     OUTPUT_DIR, DATA_DIR = ROOT / "output", ROOT / "data"
+    LOG_DIR = ROOT / "logs"
     SOUNDFONT = _pick_soundfont()
     _apply_song_dirs()
 
@@ -156,21 +161,22 @@ def n_jobs() -> int:
     return SETTINGS["jobs"] or max(1, min(4, os.cpu_count() or 1))
 
 
-def resolve_device(requested: str | None = None) -> str:
-    """'auto' -> cuda / mps when torch sees one, else cpu."""
-    want = (requested or SETTINGS["device"] or "auto").lower()
-    if want != "auto":
-        return want
-    try:
-        import torch
+_DEVICE_NOTE = [""]
 
-        if torch.cuda.is_available():
-            return "cuda"
-        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-            return "mps"
-    except Exception:  # noqa: BLE001 - no torch / broken install -> cpu
-        return "cpu"
-    return "cpu"
+
+def resolve_device(requested: str | None = None) -> str:
+    """Detect the machine, then pick cuda / mps / cpu. 'auto' uses a GPU only when PyTorch can run on it and it is big
+    and recent enough; an explicit request the machine cannot honour falls back to the CPU (see device_reason())."""
+    from . import hardware
+
+    device, reason = hardware.choose_device(hardware.detect(), requested or SETTINGS["device"] or "auto")
+    _DEVICE_NOTE[0] = reason
+    return device
+
+
+def device_reason() -> str:
+    """Why the last resolve_device() chose what it chose."""
+    return _DEVICE_NOTE[0]
 
 
 def rng(stage: str) -> random.Random:
@@ -246,7 +252,7 @@ def cache_store(stage: str, key: str, outputs=()) -> None:
 def list_input_audio() -> list:
     if not INPUT_DIR.exists():
         return []
-    return sorted(p for p in INPUT_DIR.iterdir() if p.suffix.lower() in AUDIO_EXTS)
+    return sorted(p for p in INPUT_DIR.iterdir() if p.suffix.lower() in AUDIO_EXTS + SCORE_EXTS)
 
 
 def find_input_audio() -> Path:

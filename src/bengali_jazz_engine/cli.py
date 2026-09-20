@@ -9,6 +9,7 @@
     vst       list / inspect plugins, check the role -> backend map
     corpus    refit the jazz statistics / fitness weights
     doctor    check the environment (dependencies, external tools, data files)
+    hardware  detect CPU / RAM / GPU and the device chosen for this machine
     info      workspace, songs and per-song status
     clean     delete caches / working files / stems / outputs
     lyrics    optional Whisper lyrics transcription of the vocal stem
@@ -25,10 +26,10 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, pipeline
+from . import __version__, feedback, logs, memory, pipeline
 from . import config as cfg
 
-COMMANDS = ("run", "analyze", "arrange", "render", "mix", "master", "mood", "rate", "vst", "corpus", "doctor",
+COMMANDS = ("run", "analyze", "arrange", "render", "mix", "master", "mood", "rate", "vst", "corpus", "doctor", "hardware", "logs", "feedback", "memory",
             "info", "clean", "lyrics")
 QUALITIES = tuple(cfg.QUALITY_PRESETS)
 LEADS = ("piano", "tenor_sax", "alto_sax", "soprano_sax")
@@ -49,6 +50,7 @@ def _add_analysis(p):
     g.add_argument("--tempo-scale", type=float, metavar="X",
                    help="0.5 = the song is felt at half the tracked tempo (slow ballad), 2 = double time")
     g.add_argument("--force", action="store_true", help="ignore cached stems / melody / chords and recompute")
+    g.add_argument("--part", metavar="NAME|N", help="sheet-music input: which part is the melody (default: found by name / register)")
 
 
 def _add_arrange(p):
@@ -77,6 +79,12 @@ def _add_output(p):
     g.add_argument("--output-dir", metavar="DIR", help="copy results here instead of output/<song>/ (one song only)")
     g.add_argument("--reference", metavar="WAV", help="reference track: also master the mix against it (matchering)")
     g.add_argument("--json", action="store_true", help="print the result as JSON on stdout (progress goes to stderr)")
+    fb = g.add_mutually_exclusive_group()
+    fb.add_argument("--feedback", dest="feedback", action="store_const", const=True,
+                    help="ask the three after-run questions (default: only on an interactive terminal)")
+    fb.add_argument("--no-feedback", dest="feedback", action="store_const", const=False, help="never ask after the run")
+    g.add_argument("--no-memory", action="store_true",
+                   help="ignore and do not update the memory (remembered settings, preferences, similar songs)")
 
 
 def _add_range(p):
@@ -160,6 +168,36 @@ def build_parser():
     c.add_parser("fit-jtd", help="fit rhythm-section statistics from the Jazz Trio Database annotations").add_argument(
         "--download", action="store_true")
 
+    fq = sub.add_parser("feedback", help="answer the three questions about a past run (or --answers for scripts)")
+    fq.add_argument("--run", default="last", help="run id or 'last' (default)")
+    fq.add_argument("--answers", metavar="TEXT", help="rating=good,issues=too_busy+band_static,tempo=too_fast,instrument=piano")
+
+    mem = sub.add_parser("memory", help="what the engine remembered and learned")
+    mm = mem.add_subparsers(dest="memory_cmd", metavar="<action>")
+    mm.add_parser("status", help="counts and learned preferences").add_argument("--json", action="store_true")
+    mm.add_parser("runs", help="past runs with their ratings").add_argument("--json", action="store_true")
+    sm = mm.add_parser("similar", help="past songs most like this one")
+    sm.add_argument("--song", help="song name (default: the file in input/)")
+    mm.add_parser("ingest", help="add an existing output/<song>/ folder to the memory").add_argument("song")
+    fg = mm.add_parser("forget", help="delete learned state")
+    fg.add_argument("what", choices=("all", "prefs", "songs", "runs", "feedback"))
+    fg.add_argument("--yes", action="store_true")
+
+    lg = sub.add_parser("logs", help="show, summarise or clear the unified log (logs/engine.jsonl)")
+    lg_sub = lg.add_subparsers(dest="logs_cmd", metavar="<action>")
+    sh = lg_sub.add_parser("show", help="print log lines")
+    sh.add_argument("--run", default="last", help="run id, or 'last' (default), or 'all'")
+    sh.add_argument("--level", choices=logs.LEVELS, help="minimum level")
+    sh.add_argument("--stage", help="only this stage key (separate, melody, ...)")
+    sh.add_argument("--tail", type=int, default=100, help="last N lines (default 100, 0 = all)")
+    sh.add_argument("--json", action="store_true")
+    lg_sub.add_parser("runs", help="one line per run").add_argument("--json", action="store_true")
+    lg_sub.add_parser("clear", help="delete the log files").add_argument("--yes", action="store_true")
+
+    h = sub.add_parser("hardware", help="detect CPU / RAM / GPU and show the device and settings chosen for this machine")
+    h.add_argument("--json", action="store_true")
+    h.add_argument("--refresh", action="store_true", help="probe again instead of using the cached result")
+
     d = sub.add_parser("doctor", help="check dependencies, external tools and data files")
     d.add_argument("--json", action="store_true")
 
@@ -187,6 +225,8 @@ def _options(args, only=None, stop=None):
         reference=getattr(args, "reference", None), band=getattr(args, "band", None),
         lead=getattr(args, "lead", None), seed=getattr(args, "seed", None), force=getattr(args, "force", False),
         meter=getattr(args, "meter", None), tempo_scale=getattr(args, "tempo_scale", None),
+        score_part=getattr(args, "part", None), feedback=getattr(args, "feedback", None),
+        memory=not getattr(args, "no_memory", False),
         quality=getattr(args, "quality", None), pop_size=getattr(args, "pop_size", None),
         generations=getattr(args, "generations", None), jobs=getattr(args, "jobs", None),
         device=getattr(args, "device", None), start=getattr(args, "start", None),
@@ -323,8 +363,106 @@ def doctor_report():
     add("empirical.json", (cfg.PACKAGE_DATA / "empirical.json").exists(), cfg.PACKAGE_DATA / "empirical.json", required=False)
     add("fitted_weights.json", (cfg.PACKAGE_DATA / "fitted_weights.json").exists(), "", required=False)
     add("vst.json", vst.config_path().exists(), vst.config_path(), required=False)
-    add("compute device", True, cfg.resolve_device())
+    device = cfg.resolve_device()
+    add("compute device", True, f"{device} ({cfg.device_reason()})")
     return rows
+
+
+def cmd_feedback(args):
+    run = memory.find_run(args.run)
+    if run is None:
+        raise ValueError("no recorded run yet: finish a run first (or 'memory ingest <song>')")
+    if args.answers:
+        answers = feedback.answers_from_text(args.answers)
+        fixes = memory.apply_feedback(run, answers)
+        print(f"recorded for {run['song']} ({run['run_id']}): {answers}")
+        return {"answers": answers, "remembered": fixes}
+    answers = feedback.ask(run)
+    return {"answers": answers}
+
+
+def cmd_memory(args):
+    if args.memory_cmd == "status":
+        info = memory.status()
+        if not args.json:
+            p = info["preferences"]
+            print(f"memory {info['dir']}: {info['runs']} runs ({info['rated']} rated), {info['feedback']} answers, "
+                  f"{info['songs_remembered']} recordings with remembered settings")
+            print(f"learned genome bias {p['genome_bias'] or '-'}; fitness weight scale {p['weight_scale'] or '-'}")
+        return info
+    if args.memory_cmd == "runs":
+        rows = memory.runs()
+        if not args.json:
+            for r in rows:
+                print(f"{r['run_id']}  {r['song']:<32} {r.get('instrumentation', {}).get('lead', '?'):<10} "
+                      f"fitness {r.get('fitness', {}).get('score', '-')}  rating {r.get('rating') or '-'}")
+            if not rows:
+                print("no runs recorded yet")
+        return {"runs": rows}
+    if args.memory_cmd == "similar":
+        import json as _json
+
+        song = args.song or cfg.find_input_audio().stem
+        cfg.use_song(song)
+        profile = _json.loads((cfg.ANALYSIS_DIR / "song_profile.json").read_text())
+        rows = memory.similar_runs(memory.feature_vector(profile), k=5, min_rating=-1)
+        for r in rows:
+            print(f"{r['song']:<32} distance {memory.distance(memory.feature_vector(profile), r['features']):.3f}  "
+                  f"rating {r.get('rating') or '-'}")
+        return {"similar": [r["song"] for r in rows]}
+    if args.memory_cmd == "ingest":
+        row = memory.ingest(args.song)
+        print(f"ingested {row['song']} as run {row['run_id']}")
+        return {"run": row}
+    if args.memory_cmd == "forget":
+        if not args.yes:
+            print(f"would delete '{args.what}' from {memory.memory_dir()} (pass --yes)")
+            return {"would_forget": args.what}
+        return {"removed": memory.forget(args.what)}
+    raise ValueError("memory needs an action: status | runs | similar | ingest | forget")
+
+
+def cmd_logs(args):
+    if args.logs_cmd == "show":
+        rows = logs.read(None if args.run == "all" else args.run, args.level, args.stage, args.tail or None)
+        if not args.json:
+            for r in rows:
+                print(logs.format_row(r))
+            if not rows:
+                print(f"no log lines ({logs.log_path()})")
+        return {"lines": rows, "file": str(logs.log_path())}
+    if args.logs_cmd == "runs":
+        runs = logs.runs()
+        if not args.json:
+            for r in runs:
+                secs = f"{r['seconds']:.0f}s" if r["seconds"] else "-"
+                print(f"{r['run_id']}  {r['start']}  {r['status']:<8} {secs:>6}  "
+                      f"warn {r['warnings']} err {r['errors']}  {', '.join(r['songs']) or '-'}")
+            if not runs:
+                print(f"no runs logged yet ({logs.log_path()})")
+        return {"runs": runs, "file": str(logs.log_path())}
+    if args.logs_cmd == "clear":
+        if not args.yes:
+            print(f"would delete {logs.log_path()} (and rotated backups); pass --yes")
+            return {"would_remove": [str(logs.log_path())]}
+        return {"removed": logs.clear()}
+    raise ValueError("logs needs an action: show | runs | clear")
+
+
+def cmd_hardware(args):
+    from . import hardware
+
+    hw = hardware.detect(refresh=args.refresh)
+    device = cfg.resolve_device()
+    quality, why = hardware.recommend_quality(hw, device)
+    data = {"hardware": hw.to_dict(), "device": device, "device_reason": cfg.device_reason(),
+            "demucs_extra_args": hardware.demucs_extra_args(hw, device), "recommended_quality": quality,
+            "quality_reason": why, "fingerprint": hardware.fingerprint(hw, device), "jobs": cfg.n_jobs()}
+    if not args.json:
+        print(hardware.summary(hw, device, cfg.device_reason()))
+        print(f"recommended quality: {quality} ({why}); parallel workers: {cfg.n_jobs()}"
+              + (f"; Demucs extra args: {' '.join(data['demucs_extra_args'])}" if data["demucs_extra_args"] else ""))
+    return data
 
 
 def cmd_doctor(args):
@@ -420,9 +558,10 @@ def cmd_lyrics(args):
     return {"transcript": str(lyrics.run())}
 
 
+NO_LOG = ("logs", "doctor", "info", "hardware", "mood", "vst", "clean", "feedback", "memory")   # read-only / housekeeping commands
 DISPATCH = {"run": cmd_pipeline, "analyze": cmd_pipeline, "arrange": cmd_pipeline, "render": cmd_pipeline,
             "mix": cmd_pipeline, "master": cmd_pipeline, "mood": cmd_mood, "rate": cmd_rate, "vst": cmd_vst, "corpus": cmd_corpus,
-            "doctor": cmd_doctor, "info": cmd_info, "clean": cmd_clean, "lyrics": cmd_lyrics}
+            "doctor": cmd_doctor, "hardware": cmd_hardware, "logs": cmd_logs, "feedback": cmd_feedback, "memory": cmd_memory, "info": cmd_info, "clean": cmd_clean, "lyrics": cmd_lyrics}
 
 
 def normalize_argv(argv):
@@ -459,7 +598,10 @@ def main(argv=None):
     code = 0
     try:
         stream = sys.stderr if want_json else (io.StringIO() if args.quiet else sys.stdout)
-        with contextlib.redirect_stdout(stream):
+        logged = args.command not in NO_LOG
+        if logged:
+            logs.new_run()
+        with contextlib.redirect_stdout(stream), (logs.tee() if logged else contextlib.nullcontext()):
             out = DISPATCH[args.command](args)
         if isinstance(out, tuple):
             out, code = out
@@ -468,9 +610,11 @@ def main(argv=None):
         elif args.quiet and out and out.get("result"):
             print(out["result"])
     except (ValueError, FileNotFoundError, RuntimeError, KeyError) as exc:
+        if logged:
+            logs.exception(f"{args.command} failed: {exc}", exc)
         if args.verbose:
             raise
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {exc}" + (f"  (details: {logs.log_path()})" if logged else ""), file=sys.stderr)
         return 2 if isinstance(exc, ValueError) else 1
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)

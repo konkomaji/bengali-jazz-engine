@@ -34,16 +34,23 @@ stage range can be re-run alone.
 | `cli.py`, `__main__.py` | argparse CLI: `run analyze arrange render mix master mood rate vst corpus doctor info clean lyrics`; JSON output, quiet / verbose, exit codes 0 / 1 / 2 |
 | `pipeline.py` | `RunOptions`, stage order and ranges (`select_steps`), per-song runs, `--all` batches, output collection and `manifest.json` |
 | `config.py` | workspace paths (`set_root`, `use_song`, `ensure_dirs`), settings and quality presets, device resolution, seeded RNG (`rng(stage)`), input discovery, the hash-keyed stage cache with per-key snapshots |
+| `hardware.py` | detect CPU / RAM / GPU / what PyTorch can use; `choose_device` (with reasons), Demucs segment sizing, quality recommendation, machine fingerprint |
+| `logs.py` | unified JSON-lines log (`logs/engine.jsonl`): run ids, song / stage context, events, tee of printed lines, tracebacks, read / summarise |
+| `memory.py` | runs, feedback, learned preferences, remembered per-recording settings, similar-song search, warm-start genomes (`memory/`) |
+| `feedback.py` | the three after-run multiple-choice questions and their scriptable form |
 | `mood.py` | per-song mood sign-off (`work/<song>/analysis/mood.json`, carries the song name) |
 | `rate.py` | listening tests: candidate arrangements of a song from different genomes (optionally rendered), pairwise preferences appended to `data/ratings.jsonl` |
 | `analysis/separate.py` | Demucs stems (subprocess; model, shifts and device from config), cached |
 | `analysis/melody.py` | pYIN melody (`pyin_parallel`), tuning correction, octave fixes -> `melody_raw_expressive.mid`, cached with a snapshot |
 | `analysis/chords.py` | beat_this grid, regularisation, meter and tempo overrides, chroma + Viterbi chords, key, per-bar energy; cache key includes the melody |
+| `analysis/score.py` | sheet-music / MIDI input via music21: melody part, chord symbols or estimated chords, tempo / meter / key, pickup padding, energy -> the same artefacts as the audio stages |
 | `analysis/acoustic.py` | `acoustic.json` (informational; nothing downstream reads it) |
 | `analysis/profile.py` | melody stats, mood, sections, instrumentation decision |
 | `analysis/lyrics.py` | optional Whisper transcription (side tool, not in the pipeline) |
 | `arrange/theory.py` | pure jazz theory: chord tones / scales, corpus-fitted note cost, swing math, ranges, rootless voicings |
 | `arrange/arranger.py` | genome, chord DP, comping / bass / drums / lead builders, fitness, search, local repair, MIDI + report |
+| `arrange/interplay.py` | `MelodyMap` (onsets, gaps, phrase ends, density) and the planners that make the band respond to the lead: comping slots, ride patterns, fills, bass walking lines |
+| `arrange/modes.py` | modal / raga-aware harmony: tonic + mode detection, the mode's seventh chords, modal original chords |
 | `arrange/progression.py` | key-aware triad -> 7th-chord mapping (`reharmonize`, `SHARP_PCS`); `build` / `run` (progression.json) are legacy |
 | `render/vst.py` | role -> backend map (`vst.json`), VST3 / SFZ (sfizz_render) / SF2 rendering, sfizz state patching, `block_size` |
 | `render/stems.py` | renders each role in parallel, splits hybrid leads per instrument, render cache, FluidSynth fallback |
@@ -203,6 +210,10 @@ Meter: `apply_meter_and_tempo` needs a 1.6x contrast margin (instead of 1.2x) to
 or divisor of it, after a rendered waltz (tracked 3) was re-read as 6 because chord changes on every second bar line
 inflate the contrast of the doubled meter. `tests/test_meter_audio.py` renders 4/4, 3/4 and 6/8 pieces with FluidSynth and
 checks the meter and the bar length through the real `beat_this` tracker.
+
+Band interplay and modal harmony: see `docs/RESEARCH.md`. The interplay fitness term (weight 0.11) is hand-set; the drum, comping and bass
+planners are rule-based (variety, dodging melody onsets, answering gaps), checked by tests and by measurement on rendered arrangements
+(drum bar patterns, comp / lead onset coincidence, bass line variety) but not yet by listeners.
 
 Fixed in this version (kept for the record): sfizz VST3 block size, mood leaking across songs, shared working
 directories in batch runs, chord cache ignoring the melody, smoothing grid ceiling, silent beat_this fallback, data

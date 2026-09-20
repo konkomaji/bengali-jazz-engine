@@ -2,6 +2,8 @@
 
 Turn a Bengali song into an instrumental jazz reinterpretation: stem separation, monophonic melody extraction, beat / chord / key analysis, a search-based jazz arranger, rendering and mixing, all behind one command line tool.
 
+Input can be a recording (.wav .mp3 .flac .m4a) **or sheet music** (MusicXML, MIDI, ABC, Humdrum): a score already holds the melody, chords, tempo and key, so the audio analysis stages are skipped and the melody is exact.
+
 The song decides the band: the profile stage picks a piano, tenor-sax or alto-sax lead (or a piano/sax hybrid) and a solo or trio (piano comping, or piano + walking bass + ride/brushes) from the melody's range, density and mood. `--solo` / `--full-band` / `--lead` override that. Results go to `output/<song>/`.
 
 ## Quick start
@@ -37,6 +39,10 @@ run       whole pipeline (default)          analyze   stages 1-4 (stems, melody,
 arrange   stage 5 only                      render    stage 8 only
 mix       stage 9 only                      master    stage 10 only (needs --reference)
 mood      set / show / list the mood sign-off for a song
+feedback  answer three multiple-choice questions about a past run (the engine learns from them)
+memory    status / runs / similar / ingest / forget: what the engine remembered and learned
+hardware  detect CPU / RAM / GPU and the device and settings chosen for this machine
+logs      show / runs / clear the unified log (logs/engine.jsonl)
 rate      listening tests: prepare candidate arrangements, record which you prefer (feeds fit-ratings)
 vst       list plugins, inspect one, check the role -> backend map
 corpus    fit-stats / fit-weights / fit-jtd / fit-ratings: refit the jazz statistics, fitness weights,
@@ -59,6 +65,7 @@ Options of `run` (subsets are accepted by the single-stage commands):
 | analysis | `--meter {2,3,4,6}` | force beats per bar (default: tracked, then checked against the harmony) |
 | | `--tempo-scale X` | `0.5` = the song is felt at half the tracked tempo (slow ballad), `2` = double; only `1/N` and powers of two |
 | | `--force` | ignore the stage cache |
+| | `--part NAME\|N` | sheet-music input: which part is the melody (default: found by name / register) |
 | arrangement | `--solo` / `--full-band` | force the band |
 | | `--lead {piano,tenor_sax,alto_sax,soprano_sax}` | force the lead instrument |
 | | `--seed N` | reproducible arrangement (default 0) |
@@ -70,6 +77,8 @@ Options of `run` (subsets are accepted by the single-stage commands):
 | output | `--output-dir DIR` | copy the result here (one song only) |
 | | `--reference WAV` | also master against this track (matchering) |
 | | `--json` | result as JSON on stdout, progress on stderr |
+| learning | `--feedback` / `--no-feedback` | ask the after-run questions (default: only on an interactive terminal) |
+| | `--no-memory` | ignore and do not update the memory |
 
 ```bash
 bengali-jazz-engine --quality fast --solo                       # quick draft
@@ -81,6 +90,52 @@ bengali-jazz-engine --all -q                                    # whole input/ f
 bengali-jazz-engine info --json
 bengali-jazz-engine clean --work --song "My Song" --yes
 ```
+
+### Sheet music instead of a recording
+
+```bash
+bengali-jazz-engine run --input "input/My Song.musicxml"          # also .mxl .xml .mid .midi .abc .krn
+bengali-jazz-engine run --input song.mid --part Voice --tempo-scale 0.5
+```
+
+One `score` stage (music21) replaces stem separation, melody extraction, chord / beat / key detection and the acoustic summary:
+the melody is the part named voice / vocal / melody / lead (else the highest, busiest part; `--part` overrides), chords come from
+written chord symbols or, without them, are estimated from the notes of all parts per bar (triad templates, the lowest part as
+bass, Viterbi), tempo / meter / key come from the score, a pickup bar is padded so bar lines stay on the grid, and per-bar energy
+comes from dynamics / velocities or note density and register. Everything downstream is unchanged. Limits: one chord per bar,
+the first tempo mark and time signature only (no mid-piece meter changes), and PDF or image scans need optical music recognition
+first (export MusicXML from MuseScore or Audiveris; the tool tells you so).
+
+### Hardware: it looks at the machine first
+
+`bengali-jazz-engine hardware` shows what was found and what was chosen. Detection reads the CPU, RAM, GPUs (`nvidia-smi`, then the
+OS video-controller list) and what PyTorch can really use. A GPU is used only when PyTorch can run on it, it has enough memory and it
+is recent enough; otherwise the tool stays on the CPU and says why (for example "GPU detected (GeForce GT 710) but this PyTorch is a
+CPU-only build"). Demucs gets a smaller `--segment` on GPUs under 6 GB, and a failed GPU run is retried on the CPU. `--device` forces a
+choice only when the machine can honour it.
+
+### Learning from every run
+
+After a run on an interactive terminal the tool asks three multiple-choice questions (1: rating great / good / okay / poor; 2: what
+felt off, any of: too busy, too plain, chords clash, the band repeats itself or ignores the melody, stiff feel; 3: tempo and
+instruments: too fast, too slow, want piano / sax / solo / full band). Enter skips a question. `feedback` answers later for any past
+run, `feedback --answers rating=good,issues=too_busy,tempo=too_fast` is the scriptable form. What it does with them (`memory/`):
+
+* per recording: "too fast" queues `--tempo-scale x0.5` (too slow: x2), a good or great rating keeps the tempo scale / meter / seed
+  that produced it, an instrument answer fixes the lead or band; the next run of the same file applies them by itself;
+* per taste: each "too busy", "too plain", "chords clash", "band static", "stiff feel" answer nudges the genome defaults and the fitness
+  weights a little, inside hard limits;
+* per song type: genomes of good runs of similar songs (tempo, meter, mode, register, range, density, legato, energy) join the first
+  generation of the search.
+
+`memory status` shows the counts and the learned biases, `memory forget prefs|songs|runs|feedback|all --yes` undoes them, `--no-memory`
+ignores them for one run, `memory ingest <song>` adds an existing `output/<song>/` folder. Nothing is learned that you did not say.
+
+### One log for everything
+
+`logs/engine.jsonl` (rotating, JSON lines) records every run with a run id, the song, the stage, structured events (`stage_end` with
+seconds, `run_end` with status, hardware, remembered settings), every printed line and every error with its traceback. `logs runs`
+lists runs, `logs show --run last --level WARNING --stage melody --tail 50` reads them, `logs clear --yes` deletes them.
 
 ### Workspace and outputs
 
@@ -94,6 +149,7 @@ analysis/.cache.json, analysis/.cache_files/   stage cache (+ per-song snapshots
 output/<song>/              "<song> - jazz.wav", melody_lead / chords / bass / drums .mid,
                             arrangement_report.json, song_profile.json, chord_estimate.json, manifest.json
 soundfonts/  tools/  data/  vst.json
+memory/  logs/              what the engine learned; the unified log
 ```
 
 `manifest.json` records the version, seed, quality preset, device, settings, overrides and stage timings of the run. `--no-per-song` uses one shared working directory instead.
@@ -141,6 +197,10 @@ Keywords: `devotional`, `contemplative`, `melancholic`, `romantic`, `longing`, `
 3. **Generate, score, refine** (`arrange/arranger.py`): candidate arrangements come from a small genome (reharm rate, embellishment, swing amount, behind-the-beat, comping style / density, bass feel). Chords are solved by dynamic programming over half-bar windows against the melody (chord-scale and avoid-note theory, secondary dominants, tritone subs, deviation cost from the source harmony, corpus chord-transition costs). Candidates are scored on melody / chord consonance, voice-leading, faithfulness, dynamics vs the source, texture, chord-change rate and harmonic interest; genomes evolve, then clashing windows are re-opened and re-solved. Every iteration is logged in `arrangement_report.json`.
 4. **Render + mix**: dry stems per role (VST3 / SFZ / SF2 / FluidSynth), then per-stem EQ, reverb, pan, bus compression and limiting.
 
+**The band listens to the lead** (`arrange/interplay.py`): chords land in the melody's gaps and are pushed off its onsets, the ride pattern changes from bar to bar and lightens under a busy melody, kick and rim hits lock to the melody's accents, breaths get drum fills, section starts get a crash, the bass walks with a contour instead of cycling, and the whole band steps back while the lead is busy.
+
+**Raga-aware harmony** (`arrange/modes.py`): the melody's tonic and mode are found from where it rests (Sa / Pa stress, phrase-final notes, the mode's colour tone); a Bhairavi / Kafi / Khamaj / Yaman-type tune is harmonised with the chords of its own mode instead of a major-key ii-V-I. It is an approximation of a raga's scale, not of its phrases.
+
 The jazz rules (swing ratio vs tempo, rootless voicings, walking / two-feel bass, ride / brush patterns, sax vibrato / scoops / falls, approach notes) live in `arrange/theory.py` and `arrange/arranger.py`; `docs/EVIDENCE.md` says where each number comes from.
 
 ## Package layout
@@ -151,8 +211,13 @@ src/bengali_jazz_engine/
   pipeline.py           stage order, ranges, per-song runs, manifest
   config.py             workspace paths, settings, quality presets, RNG, stage cache
   mood.py               per-song mood sign-off
-  analysis/             separate, melody, chords (beats/meter/chords/key), acoustic, profile, lyrics
-  arrange/              theory (pure jazz theory), arranger (search + layers), progression (key-aware 7th chords)
+  hardware.py           detect the machine, choose device and settings
+  logs.py               unified JSON-lines log
+  memory.py, feedback.py  what the engine records, asks, remembers and learns
+  rate.py               listening tests (pairwise preferences)
+  analysis/             separate, melody, chords (beats/meter/chords/key), acoustic, score (sheet music), profile, lyrics
+  arrange/              theory (pure jazz theory), arranger (search + layers), interplay (band listens to the lead),
+                        modes (raga / modal harmony), progression (key-aware 7th chords)
   render/               vst (backends), stems (parallel + cached render), mix, master
   corpus/               fit_stats, fit_weights (offline fitting from WJazzD / iReal)
   data/                 empirical.json, fitted_weights.json (shipped derived statistics)
@@ -160,7 +225,7 @@ tests/                  unit, math, CLI, pipeline and end-to-end tests
 docs/                   ARCHITECTURE, EVIDENCE, QA_REPORT, TECHNICAL_PAPER, ORIGINAL_DESIGN_BRIEF (historical)
 ```
 
-See `docs/ARCHITECTURE.md` for the data flow, on-disk contract and known problems; `docs/EVIDENCE.md` for parameter provenance; `docs/TECHNICAL_PAPER.md` for the failure-mode history (its early sections describe the first, template-based version); `docs/QA_REPORT.md` for the test and lint status.
+See `docs/ARCHITECTURE.md` for the data flow, on-disk contract and known problems; `docs/EVIDENCE.md` for parameter provenance; `docs/TECHNICAL_PAPER.md` for the failure-mode history (its early sections describe the first, template-based version); `docs/QA_REPORT.md` for the test and lint status; `docs/RESEARCH.md` for the research behind the interplay, modal, hardware and learning features and the open items.
 
 Refit the statistics: `bengali-jazz-engine corpus fit-stats --download` (raw corpora go to `data/`, output to `src/bengali_jazz_engine/data/empirical.json`), `corpus fit-weights` (harmony fitness weights, held-out AUC ~0.93) and `corpus fit-jtd --download` (rhythm-section statistics from the annotations of the Jazz Trio Database: bass onsets per bar and the pianist's lag, which the arranger uses).
 

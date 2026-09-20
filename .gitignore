@@ -44,3 +44,5 @@ work/
 bench_*
 *.bak
 data/jtd/
+memory/
+logs/

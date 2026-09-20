@@ -26,6 +26,9 @@ tune by ear.
 | Sax scoop / fall frequency, sizes | 50%, -150 / -250 cents | Assumption | no published rates found |
 | Rootless voicing shapes (type A 3-5-7-9, type B 7-9-3-5) | | Published (pedagogy) | thejazzpianosite / piano.org |
 | Voicing register 50-72 (MIDI) | | Assumption | qualitative sources give E3-G4 / C4-C5 thumb note |
+| Interplay rules: gap length 0.30 s, phrase gap 0.45 s, busy bar >= 6 onsets, fill length, drum accent probability 0.2 + 0.35 x energy, comp answer probability 0.85 | see `arrange/interplay.py` | Assumption | practice described in jazz pedagogy (comping as conversation, fills at phrase ends; see `docs/RESEARCH.md`); no measured values; tune by ear |
+| Interplay fitness weight | 0.11 (variety 0.4, dodging 0.3, answering 0.3) | Assumption | hand-set; fit with `rate` + `corpus fit-ratings` |
+| Mode detection (scale fit + 1.2 x tonic / fifth / phrase-end stress + 0.8 x colour tone + 0.03 functional prior) | tonic and mode of the melody | Heuristic | reproduces the catalogue raga (Bhairavi-Baul -> E Phrygian) on the one song where it could be checked; not validated on a corpus |
 | Comping hits per bar, Charleston frequency | | Assumption | the Jazz Trio Database piano onsets (6-9 per bar, ~47% off-beat, nearly uniform over the eight eighth slots) mix soloing with comping, so they cannot be used as comping statistics; the search chooses among styles per song |
 | Fraction of chords reharmonised | target 15-40% | Assumption | no corpus study found; tuned only by the "interest" fitness term |
 | Drum velocities, ghost-note rate (12%), feathered kick (70%) | | Assumption | qualitative sources only |

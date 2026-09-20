@@ -17,7 +17,8 @@ import numpy as np
 
 from .. import config as cfg
 
-TERMS = ("consonance", "plausibility", "voice_leading", "faithfulness", "dynamics", "texture", "change_rate", "interest")
+TERMS = ("consonance", "plausibility", "voice_leading", "faithfulness", "dynamics", "texture", "change_rate", "interest",
+         "interplay")
 WINNERS = ("a", "b", "tie")
 
 
