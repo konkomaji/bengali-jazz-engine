@@ -2,9 +2,9 @@
 import subprocess
 import sys
 
+from .. import config as cfg
 from .. import hardware
 from ..config import cache_store, cache_valid, file_sha256, find_input_audio
-from .. import config as cfg
 
 STEM_NAMES = ("vocals", "bass", "drums", "other")
 

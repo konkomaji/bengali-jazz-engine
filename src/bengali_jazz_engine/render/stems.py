@@ -16,9 +16,10 @@ from pathlib import Path
 
 import numpy as np
 import pretty_midi
-from . import vst
-from ..config import require_fluidsynth, require_soundfont
+
 from .. import config as cfg
+from ..config import require_fluidsynth, require_soundfont
+from . import vst
 
 
 def fluidsynth_render(midi_path: Path, wav_path: Path):

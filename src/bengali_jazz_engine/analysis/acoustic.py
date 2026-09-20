@@ -1,12 +1,11 @@
 """Stage 3 - structural/key/acoustic character analysis."""
 import json
-import sys
-from pathlib import Path
 
 import librosa
 import numpy as np
-from ..config import find_input_audio
+
 from .. import config as cfg
+from ..config import find_input_audio
 
 
 def run():

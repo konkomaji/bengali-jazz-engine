@@ -4,10 +4,9 @@ web search context and calls save_mood.py with the resulting keyword.
 """
 import subprocess
 import sys
-from pathlib import Path
 
-from ..config import find_input_audio
 from .. import config as cfg
+from ..config import find_input_audio
 
 
 def run():

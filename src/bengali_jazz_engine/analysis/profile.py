@@ -6,18 +6,16 @@ range, density, phrasing) and a mood - then DECIDES the instrumentation
 (piano, sax lead, or a piano/sax mix; solo / trio) from that evidence
 instead of always defaulting to piano.
 """
-import json
-import sys
-from pathlib import Path
-
 import itertools
+import json
 
 import librosa
 import numpy as np
 import pretty_midi
-from ..config import find_input_audio
+
 from .. import config as cfg
 from ..arrange import modes
+from ..config import find_input_audio
 
 SAD = {"melancholic", "longing", "nostalgic", "romantic"}
 CALM = {"devotional", "contemplative"}

@@ -44,6 +44,7 @@ from pathlib import Path
 
 import numpy as np
 import pretty_midi
+
 from .. import config as cfg
 
 SR = 44100
@@ -166,7 +167,7 @@ def _run(cmd):
     """Run an external renderer; on failure raise with its stderr so the fallback warning says why."""
     import subprocess
 
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-5:]
         raise RuntimeError(f"{Path(cmd[0]).name} exited {proc.returncode}: " + " | ".join(tail))

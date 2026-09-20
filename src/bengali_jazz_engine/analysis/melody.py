@@ -11,9 +11,10 @@ from concurrent.futures import ProcessPoolExecutor
 import librosa
 import numpy as np
 import pretty_midi
-from ..config import cache_hit, cache_store, file_sha256, find_input_audio
-from .. import config as cfg
 from scipy.signal import medfilt
+
+from .. import config as cfg
+from ..config import cache_hit, cache_store, file_sha256, find_input_audio
 
 MIN_NOTE_SEC = 0.08
 MAX_GAP_SEC = 0.05  # bridge tiny unvoiced blips within a sustained note

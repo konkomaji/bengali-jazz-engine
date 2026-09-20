@@ -42,7 +42,14 @@ def db(x):
 
 
 def stem_chain(kind, is_horn=False):
-    from pedalboard import Compressor, HighpassFilter, LowpassFilter, PeakFilter, Pedalboard, Reverb
+    from pedalboard import (
+        Compressor,
+        HighpassFilter,
+        LowpassFilter,
+        PeakFilter,
+        Pedalboard,
+        Reverb,
+    )
 
     mud = PeakFilter(cutoff_frequency_hz=250, gain_db=-2.0, q=0.8)
     if kind == "bass":

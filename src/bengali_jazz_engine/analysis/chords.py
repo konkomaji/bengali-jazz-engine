@@ -17,13 +17,20 @@ Pipeline:
 import hashlib
 import itertools
 import json
-import sys
 from pathlib import Path
 
 import librosa
 import numpy as np
-from ..config import OVERRIDES, cache_hit, resolve_device, cache_store, file_sha256, find_input_audio
+
 from .. import config as cfg
+from ..config import (
+    OVERRIDES,
+    cache_hit,
+    cache_store,
+    file_sha256,
+    find_input_audio,
+    resolve_device,
+)
 
 PITCHES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 CHANGE_PENALTY = 0.15  # cosine-similarity-scale penalty for switching chords

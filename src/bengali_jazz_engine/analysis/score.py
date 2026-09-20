@@ -146,11 +146,11 @@ def _chord_symbols(score):
     out = []
     for cs in score.flatten().getElementsByClass(harmony.ChordSymbol):
         try:
-            root = cs.root().pitchClass
-            minor = cs.quality in ("minor", "diminished")
+            entry = (float(cs.offset), int(cs.root().pitchClass), bool(cs.quality in ("minor", "diminished")))
         except Exception:  # noqa: BLE001 - "N.C." or a symbol music21 cannot spell
-            continue
-        out.append((float(cs.offset), int(root), bool(minor)))
+            entry = None
+        if entry:
+            out.append(entry)
     return sorted(out)
 
 
