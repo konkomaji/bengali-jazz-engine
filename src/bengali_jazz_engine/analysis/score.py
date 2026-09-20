@@ -3,7 +3,8 @@
     bengali-jazz-engine run --input "input/My Song.musicxml"
 
 Supported: MusicXML (``.musicxml``, ``.mxl``, ``.xml``), MIDI (``.mid``, ``.midi``), ABC (``.abc``) and Humdrum
-(``.krn``), read with music21. A score already contains what the audio stages have to estimate, so this one stage
+(``.krn``), read with music21, and Bengali swaralipi (``.swar``, ``.sargam``, ``.swaralipi``) read by
+``analysis/swaralipi.py``. A score already contains what the audio stages have to estimate, so this one stage
 replaces stem separation, melody extraction, chord / beat / key detection and the acoustic summary and writes the same
 two artefacts they do: ``midi/melody_raw_expressive.mid`` (exact notes in seconds) and ``analysis/chord_estimate.json``
 (bars, chords, tempo, meter, key, per-bar energy). Everything downstream (profile, arranger, render, mix) is unchanged.
@@ -27,6 +28,7 @@ import pretty_midi
 from .. import config as cfg
 from ..config import cache_hit, cache_store, file_sha256, find_input_audio
 from . import chords as chordlib
+from . import swaralipi
 
 SCORE_EXTS = cfg.SCORE_EXTS
 UNSUPPORTED = (".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")
@@ -170,7 +172,10 @@ def _bar_grid(score, numerator, denominator, total_ql):
 
 
 def read(path, part=None, tempo_scale=None):
-    """Parse a score into plain data: dict(tempo_bpm, beats_per_bar, key, melody[(pitch,start,end,vel)], bars[...])."""
+    """Parse a score into plain data: dict(tempo_bpm, beats_per_bar, key, melody[(pitch,start,end,vel)], bars[...]).
+    Bengali swaralipi is read by its own parser; everything else goes through music21."""
+    if swaralipi.is_swaralipi(path):
+        return swaralipi.read(path, tempo_scale)
     score = _load(path)
     from music21 import meter, tempo
 
@@ -324,7 +329,14 @@ def run():
     write_melody(data["melody"], mel_path)
     cache_store("score", key, [est_path, mel_path])
     how = "chord symbols" if data["symbols"] else "estimated from the notes"
-    print(f"Read {path.name}: {len(estimate['bars'])} bars of {data['signature']} ({estimate['beats_per_bar']} pulses), "
-          f"{estimate['tempo_bpm']:.0f} BPM, key {data['key']['tonic']} {data['key']['mode']}, "
-          f"{len(data['melody'])} melody notes (part {data['melody_part']}), chords {how}")
+    if swaralipi.is_swaralipi(path):
+        raga = data["settings"].get("raga")
+        print(f"Read {path.name}: {data['matras']} matras of {data['signature']} -> {len(estimate['bars'])} bars of "
+              f"{estimate['beats_per_bar']}, {estimate['tempo_bpm']:.0f} matras/min, Sa = "
+              f"{chordlib.PITCHES[data['tonic_midi'] % 12]}{data['tonic_midi'] // 12 - 1}"
+              f"{', raga ' + raga if raga else ''}, {len(data['melody'])} swaras, chords {how}")
+    else:
+        print(f"Read {path.name}: {len(estimate['bars'])} bars of {data['signature']} ({estimate['beats_per_bar']} pulses), "
+              f"{estimate['tempo_bpm']:.0f} BPM, key {data['key']['tonic']} {data['key']['mode']}, "
+              f"{len(data['melody'])} melody notes (part {data['melody_part']}), chords {how}")
     return estimate

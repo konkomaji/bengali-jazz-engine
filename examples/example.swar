@@ -1,0 +1,19 @@
+# A short made-up phrase, only to show the format - not the notation of any real song.
+# Copy the swaralipi of your song from its published notation and arrange it with:
+#     bengali-jazz-engine run --input examples/example.swar
+
+title: Example phrase
+tonic: E          # where Sa sits: a note name (E, F#, Bb) or a MIDI number
+taal: dadra       # or:  per bar: 6   /  matras: 6
+tempo: 90         # matras per minute
+raga: Bhairavi    # recorded in the report, not interpreted
+
+# S R G m P D N are shuddha, r g d n komal, M tivra madhyam.
+# ' after a swara = taar saptak (up an octave), , = mandra (down).
+# '-' holds the swara before it, '0' is a rest, swaras written together share one matra (SR).
+# Bengali letters work too:  | স র_ গ_ | ম প - |
+
+| S R g | m P - |
+| d P m | g R S |
+| S' - n | d P m |
+| g m g | R S - |

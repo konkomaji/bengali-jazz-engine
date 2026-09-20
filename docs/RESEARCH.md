@@ -99,7 +99,8 @@ This is measurement, not a verdict: whether the render now sounds like the song 
 3. A GPU test of Demucs `--segment` sizing and `--device cuda` (no GPU available here).
 4. Seventh-chord vocabulary and a neural pitch tracker, each only with annotated audio to measure against.
 5. Real annotated 3/4 and 6/8 recordings for the meter check.
-6. Swaralipi (sargam) input, so a Rabindrasangeet can be arranged from its published notation instead of from a
-   transcription of a recording - the melody would then be exact and none of the cleaning above would be needed.
+6. Done: swaralipi input (`analysis/swaralipi.py`). The notation of a Rabindrasangeet can be typed as published, and
+   from a score the melody is exact - the cleaning above is skipped entirely. The published notations are images, so
+   they still have to be typed by hand; optical recognition of printed swaralipi would be the next step.
 7. Play the removed ornaments as pitch bends (`melodyline.ornaments` already reports them) so the meend is heard
    as a glide rather than dropped.

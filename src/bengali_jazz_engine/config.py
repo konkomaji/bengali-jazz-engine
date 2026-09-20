@@ -19,7 +19,8 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 PACKAGE_DATA = PACKAGE_DIR / "data"          # derived statistics shipped with the package
 
 AUDIO_EXTS = (".wav", ".mp3", ".flac", ".m4a")
-SCORE_EXTS = (".musicxml", ".mxl", ".xml", ".mid", ".midi", ".abc", ".krn")   # sheet music / MIDI instead of a recording
+SCORE_EXTS = (".musicxml", ".mxl", ".xml", ".mid", ".midi", ".abc", ".krn",   # sheet music / MIDI instead of a recording
+               ".swar", ".sargam", ".swaralipi")                              # Bengali notation (analysis/swaralipi.py)
 SOUNDFONT_CANDIDATES = ("MuseScore_General.sf2", "GeneralUser_GS.sf2", "FluidR3_GM.sf2")
 MOOD_KEYWORDS = (
     "devotional", "contemplative", "melancholic", "romantic", "longing",

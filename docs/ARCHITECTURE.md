@@ -44,6 +44,7 @@ stage range can be re-run alone.
 | `analysis/melody.py` | pYIN melody (`pyin_parallel`), tuning correction, octave fixes -> `melody_raw_expressive.mid`, cached with a snapshot |
 | `analysis/chords.py` | beat_this grid, regularisation, meter and tempo overrides, chroma + Viterbi chords, key, per-bar energy; cache key includes the melody |
 | `analysis/score.py` | sheet-music / MIDI input via music21: melody part, chord symbols or estimated chords, tempo / meter / key, pickup padding, energy -> the same artefacts as the audio stages |
+| `analysis/swaralipi.py` | Bengali notation (`.swar`): swaras, komal/tivra marks, octave marks, matras, holds, rests, taal names -> the same structure `score.py` builds a song from |
 | `analysis/acoustic.py` | `acoustic.json` (informational; nothing downstream reads it) |
 | `analysis/profile.py` | melody stats, mood, sections, instrumentation decision |
 | `analysis/lyrics.py` | optional Whisper transcription (side tool, not in the pipeline) |
@@ -221,6 +222,10 @@ phrase-level structure (variety between 0.3 and 0.8, not a loop and not noise) a
 Horn lead: notes are shifted 28 ms early (`HORN_ATTACK_LEAD`, the measured attack of the tenor SFZ) so the audible onset lands on the beat, slow drift replaces
 per-note random jitter, grace notes become pitch-bend scoops (no fragments), notes under 0.11 s are lengthened or dropped, and octave fitting moves whole phrases
 (`theory.fit_phrases`) instead of folding single notes, which used to break the contour of a phrase.
+
+Score input: `score.read` dispatches swaralipi to `analysis/swaralipi.py` and everything else to music21. The bar marks in a swaralipi
+decide the bar (the taal only names the cycle and supplies a default), the last bar may be short, and `Context` skips melody cleaning
+when `meter_evidence.source == "score"` - written notation is the composer's, not a transcription to be repaired.
 
 Melody and voicing (after a musician's review of an early render - "the tune itself isn't there", "no chord sounds right"):
 `melodyline.clean` runs inside `Context` on the melody the arranger uses (the raw transcription stays on disk), and `choose_voicing` now takes the

@@ -2,7 +2,7 @@
 
 Turn a Bengali song into an instrumental jazz reinterpretation: stem separation, monophonic melody extraction, beat / chord / key analysis, a search-based jazz arranger, rendering and mixing, all behind one command line tool.
 
-Input can be a recording (.wav .mp3 .flac .m4a) **or sheet music** (MusicXML, MIDI, ABC, Humdrum): a score already holds the melody, chords, tempo and key, so the audio analysis stages are skipped and the melody is exact.
+Input can be a recording (.wav .mp3 .flac .m4a), **sheet music** (MusicXML, MIDI, ABC, Humdrum) or **Bengali swaralipi** (.swar): a score already holds the melody, chords, tempo and key, so the audio analysis stages are skipped and the melody is exact.
 
 The song decides the band: the profile stage picks a piano, tenor-sax or alto-sax lead (or a piano/sax hybrid) and a solo or trio (piano comping, or piano + walking bass + ride/brushes) from the melody's range, density and mood. `--solo` / `--full-band` / `--lead` override that. Results go to `output/<song>/`.
 
@@ -97,6 +97,32 @@ bengali-jazz-engine clean --work --song "My Song" --yes
 bengali-jazz-engine run --input "input/My Song.musicxml"          # also .mxl .xml .mid .midi .abc .krn
 bengali-jazz-engine run --input song.mid --part Voice --tempo-scale 0.5
 ```
+
+### Swaralipi: give it the notation, not a recording
+
+Bengali songs are published as swaralipi, not as MusicXML, so the notation can be typed as it is written
+(`.swar`, `.sargam`, `.swaralipi`; see `examples/example.swar`):
+
+```
+title: Pran Chay Chokkhu Na Chay
+tonic: E            # where Sa sits - a note name (E, F#, Bb) or a MIDI number
+taal: tritaal       # or:  per bar: 4   /  matras: 16
+tempo: 60           # matras per minute
+raga: Bhairavi      # recorded in the report, not interpreted
+
+| S - r S | n, S r G |
+| M - - - | P - m G |
+```
+
+`S R G m P D N` are the shuddha swaras, `r g d n` the komal ones and `M` tivra madhyam; the Bengali letters
+`স র গ ম প ধ ন` work too, with `_` after a letter for komal and `^` for tivra, since those marks are printed under
+and over the letter. `'` raises a swara an octave (taar), `,` lowers it (mandra), and both repeat. One swara is one
+matra: `-` holds the one before it, `0` is a rest, and swaras written together share a matra (`SR`, `SRG`). The bar
+marks decide the bar - a 16-matra tritaal line becomes four bars of four - the last bar may be short, `#` starts a
+comment and a line of lyrics under the notation is ignored.
+
+From notation the engine skips the audio stages and skips the melody cleaning as well: the pitches and the matras are
+the composer's, so there is nothing to repair. That is the most accurate way to use this tool.
 
 One `score` stage (music21) replaces stem separation, melody extraction, chord / beat / key detection and the acoustic summary:
 the melody is the part named voice / vocal / melody / lead (else the highest, busiest part; `--part` overrides), chords come from
@@ -199,7 +225,7 @@ Keywords: `devotional`, `contemplative`, `melancholic`, `romantic`, `longing`, `
 
 **The band listens to the lead** (`arrange/interplay.py`): chords land in the melody's gaps and are pushed off its onsets, the ride pattern changes from bar to bar and lightens under a busy melody, kick and rim hits lock to the melody's accents, breaths get drum fills, section starts get a crash, the bass walks with a contour instead of cycling, and the whole band steps back while the lead is busy.
 
-**The tune first** (`arrange/melodyline.py`): a pitch tracker hears every meend and grace turn on a Bengali vocal as its own semitone note, and playing all of them back is what makes an arrangement sound like plinking rather than like the song. Before arranging, the line is reduced to its skeleton - repeated pitches merged, out-of-scale glides snapped onto the song's own scale, ornaments shorter than 0.13 s absorbed into the note they decorate, held notes really held. On one Rabindrasangeet this turned 496 tracked fragments into 342 notes and took the median note from 0.16 s to 0.30 s.
+**The tune first** (`arrange/melodyline.py`, audio input only - a score is left exactly as written): a pitch tracker hears every meend and grace turn on a Bengali vocal as its own semitone note, and playing all of them back is what makes an arrangement sound like plinking rather than like the song. Before arranging, the line is reduced to its skeleton - repeated pitches merged, out-of-scale glides snapped onto the song's own scale, ornaments shorter than 0.13 s absorbed into the note they decorate, held notes really held. On one Rabindrasangeet this turned 496 tracked fragments into 342 notes and took the median note from 0.16 s to 0.30 s.
 
 **Chords that clear the singer** (`theory.choose_voicing`): under a sung melody the piano plays shells (3rd and 7th, or 3rd and 6th when the melody sits on the root), never a chord tone a semitone under a melody note, and when the melody insists on an avoid note the chord tone moves onto it and becomes a suspension. A modal song is also voiced strictly inside its own scale, and its ornaments step through the mode instead of chromatically.
 

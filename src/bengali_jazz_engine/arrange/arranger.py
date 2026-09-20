@@ -183,7 +183,14 @@ class Context:
             m = profile["modal"]
             scale = {(m["tonic"] + d) % 12 for d in modes.MODES[m["mode"]]}
         self.scale_pcs = scale
-        self.notes, self.melody_report = melodyline.clean(self.notes, scale)   # the tune, not every tracked fragment
+        # a score is already the tune: cleaning exists to undo a pitch tracker's ornament fragments, and running it on
+        # written notation would merge repeated notes the composer wrote twice
+        self.from_score = estimate.get("meter_evidence", {}).get("source") == "score"
+        if self.from_score:
+            self.melody_report = {"notes_before": len(self.notes), "notes_after": len(self.notes),
+                                  "skipped": "input is a score"}
+        else:
+            self.notes, self.melody_report = melodyline.clean(self.notes, scale)
         self.mel_notes = [self._window_notes(w) for w in self.windows]
         self.mm = interplay.MelodyMap(self.notes, self.bars, self.bpb)            # what the band hears the lead do
         self.weights = memory.scaled_weights(WEIGHTS) if memory.enabled() else dict(WEIGHTS)   # nudged by your feedback
