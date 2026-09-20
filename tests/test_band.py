@@ -263,3 +263,34 @@ def test_a_phrase_repeats_its_motif_then_varies_and_swells():
     assert motif.get(0) and len(motif[0] & motif.get(1, set())) >= 1            # bars 1 and 2 share the idea
     level = [np.mean([n.velocity for n in drums.notes if arranger.RIDE == n.pitch and int(n.start // BAR) == b] or [0]) for b in range(4)]
     assert level[3] >= level[0]                                                # the phrase swells toward its last bar
+
+
+# ---- the horn lead: no fragments, no folded notes inside a phrase, onset on the beat ---------------------------
+
+def test_phrases_are_octave_shifted_as_units_not_note_by_note():
+    lo, hi = 44, 76
+    phrase_a = [70, 72, 74, 78, 76, 74]                    # one note (78) sticks out above the range
+    phrase_b = [50, 52, 54, 55]
+    pitches = phrase_a + phrase_b
+    ids = [0] * len(phrase_a) + [1] * len(phrase_b)
+    fitted = theory.fit_phrases(pitches, ids, lo, hi)
+    assert all(lo <= p <= hi for p in fitted) and len(fitted) == len(pitches)
+    whole_song = theory.fit_to_range(pitches, lo, hi)
+    assert fitted[:6] == [p - 12 for p in phrase_a] or fitted[:6] == phrase_a or max(fitted[:6]) - min(fitted[:6]) <= 8
+    steps = [abs(b - a) for a, b in itertools.pairwise(fitted[:6])]
+    assert max(steps) <= max(abs(b - a) for a, b in itertools.pairwise(phrase_a))                # contour not stretched
+    assert theory.fit_phrases([], [], lo, hi) == [] and len(whole_song) == len(pitches)
+
+
+def test_horn_lead_has_no_crumbs_no_grace_notes_and_leads_the_beat():
+    ctx = make_ctx(n_bars=16)
+    ctx.inst["lead"], ctx.inst["plan"] = "tenor_sax", "sax"
+    genome = {**arranger.DEFAULT_GENOME, "embellish": 0.3, "behind_ms": 0.0}
+    lead, _emb = arranger.build_lead(ctx, [ctx.original[i] for i in range(len(ctx.windows))], genome, random.Random(4))
+    notes = sorted((n for i in lead for n in i.notes if i.name == "lead_tenor_sax"), key=lambda n: n.start)
+    assert notes and min(n.end - n.start for n in notes) >= 0.06
+    assert sum(n.end - n.start < arranger.HORN_MIN_NOTE - 1e-6 for n in notes) <= 0.05 * len(notes)     # only where a neighbour blocks it
+    assert len(notes) <= len(ctx.notes)                                                          # no extra grace notes
+    src = sorted(ctx.notes, key=lambda n: n[1])
+    shift = np.mean([notes[k].start - src[k][1] for k in range(min(len(notes), len(src)))])
+    assert -0.06 < shift < -0.01                                                                # about one attack earlier

@@ -217,6 +217,10 @@ starts); the drums pick one ride pattern per phrase, compose a snare / kick moti
 (`vary_cell`) and end the phrase with `setup_hits`; slow tunes use the GM brush kit (swirl 40, tap 38). The interplay fitness term now also rewards
 phrase-level structure (variety between 0.3 and 0.8, not a loop and not noise) and drum / piano figures that lock part of the time.
 
+Horn lead: notes are shifted 28 ms early (`HORN_ATTACK_LEAD`, the measured attack of the tenor SFZ) so the audible onset lands on the beat, slow drift replaces
+per-note random jitter, grace notes become pitch-bend scoops (no fragments), notes under 0.11 s are lengthened or dropped, and octave fitting moves whole phrases
+(`theory.fit_phrases`) instead of folding single notes, which used to break the contour of a phrase.
+
 Band interplay and modal harmony: see `docs/RESEARCH.md`. The interplay fitness term (weight 0.11) is hand-set; the drum, comping and bass
 planners are rule-based (variety, dodging melody onsets, answering gaps), checked by tests and by measurement on rendered arrangements
 (drum bar patterns, comp / lead onset coincidence, bass line variety) but not yet by listeners.

@@ -43,7 +43,7 @@ from .theory import (
     choose_voicing,
     chord_pcs,
     common_tones,
-    fit_to_range,
+    fit_phrases,
     harmonic_rhythm_target,
     melody_cost,
     note_cost,
@@ -561,17 +561,27 @@ def _bend(cents):
     return int(np.clip(cents / 200.0 * 8191, -8192, 8191))
 
 
-def build_lead(ctx, chords, genome, r):
+HORN_ATTACK_LEAD = 0.028   # s: the tenor sax sample library reaches half level about 28 ms after the note-on (measured)
+HORN_MIN_NOTE = 0.11       # s: shorter horn notes sound like clicks or breaks; they are lengthened or dropped
+
+
+def build_lead(ctx, chords, genome, r, groove=None):
     """Melody -> lead instrument(s): range fit, swing, behind-the-beat,
     embellishment, legato/breath shaping and (sax) vibrato/scoops/falls."""
     lead, plan = ctx.inst["lead"], ctx.inst["plan"]
     notes = ctx.notes
     pitches = [n[0] for n in notes]
     swing = soloist_offbeat_fraction(ctx.tempo, genome["swing_amt"])   # soloists ~1.1:1, not 2:1
+    groove = groove or interplay.Groove(r)
+    phrase_ids, pid = [], 0
+    for k, n in enumerate(notes):
+        if k and n[1] - notes[k - 1][2] >= interplay.PHRASE_GAP_SEC:
+            pid += 1
+        phrase_ids.append(pid)
 
     def range_for(name):
         lo, hi = (67, 91) if name == "piano" else RANGES[name]
-        return fit_to_range(pitches, lo, hi)
+        return fit_phrases(pitches, phrase_ids, lo, hi)
 
     fitted = {name: range_for(name) for name in {"piano", lead}}
     sec_energy_level = {i: s["level"] for i, s in enumerate(ctx.profile["sections"])}
@@ -600,7 +610,9 @@ def build_lead(ctx, chords, genome, r):
         pos_now = ctx._beat_pos(s)[0]
         if pos_now < 0.12 or pos_now > 0.9:
             s += behind
-        s += _gauss(r, 0.008)
+        s += groove.offset("lead") * 0.6                                    # slow drift, not per-note jitter
+        if name != "piano":
+            s -= HORN_ATTACK_LEAD                                            # so the audible onset lands on the beat
         e = s + dur
         bar = int(np.clip(bisect.bisect_right([b["start_sec"] for b in ctx.bars], s) - 1, 0, len(ctx.bars) - 1))
         energy = ctx.energy_at(bar)
@@ -618,8 +630,8 @@ def build_lead(ctx, chords, genome, r):
     grace, n_graced = [], 0
     scale = 0.6 if lead == "piano" and plan == "piano" else 1.0
     for i, n in enumerate(processed):
-        if i == 0 or n["end"] - n["start"] < 0.3 or n["phrase_start"]:
-            continue
+        if i == 0 or n["end"] - n["start"] < 0.3 or n["phrase_start"] or n["inst"] != "piano":
+            continue                                                         # a horn scoops instead of adding tiny notes
         if r.random() < genome["embellish"] * scale:
             n_graced += 1
             prev = processed[i - 1]
@@ -647,6 +659,14 @@ def build_lead(ctx, chords, genome, r):
         if d >= 0.5:
             n["end"] = n["start"] + d * 0.94
 
+    horn = sorted((n for n in processed if n["inst"] != "piano"), key=lambda n: n["start"])
+    for k, n in enumerate(horn):                                             # no fragments: lengthen short notes, drop crumbs
+        nxt = horn[k + 1]["start"] if k + 1 < len(horn) else float("inf")
+        if n["end"] - n["start"] < HORN_MIN_NOTE:
+            n["end"] = min(n["start"] + HORN_MIN_NOTE, nxt - 0.005)
+        if n["end"] - n["start"] < 0.06:
+            n["drop"] = True
+    processed = [n for n in processed if not n.get("drop")]
     for name in {n["inst"] for n in processed}:
         ins = pretty_midi.Instrument(program=GM_PROGRAM[name], name=f"lead_{name}")
         ins.control_changes.append(pretty_midi.ControlChange(91, 45, 0.0))
@@ -693,7 +713,7 @@ def generate(ctx, genome, chords=None):
     chords = list(chords) if chords is not None else solve_chords(ctx, genome)
     groove = interplay.Groove(r)                                   # one feel for the whole band
     comp, voicings = build_comping(ctx, chords, genome, r, groove)
-    lead, emb_share = build_lead(ctx, chords, genome, r)
+    lead, emb_share = build_lead(ctx, chords, genome, r, groove)
     comp_times = sorted({round(n.start, 3) for n in comp.notes})
     arr = {"chords": chords, "comp": comp, "voicings": voicings, "lead": lead, "emb_share": emb_share,
            "bass": build_bass(ctx, chords, genome, r, groove),

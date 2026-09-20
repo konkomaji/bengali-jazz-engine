@@ -234,6 +234,42 @@ def fit_to_range(pitches, lo, hi, prefer_center=True):
     return result
 
 
+def fit_phrases(pitches, phrase_ids, lo, hi):
+    """Octave-shift each phrase as a unit so it sits in [lo, hi] and stays close to the previous phrase, then fold only
+    the notes that still do not fit. Whole-song fitting folds isolated notes by an octave in the middle of a phrase, which
+    breaks the melodic contour; this keeps every phrase intact (a horn player would also move a phrase, not a note)."""
+    if not pitches:
+        return []
+    out = [0] * len(pitches)
+    centre = (lo + hi) / 2
+    prev_median = None
+    i = 0
+    while i < len(pitches):
+        j = i
+        while j < len(pitches) and phrase_ids[j] == phrase_ids[i]:
+            j += 1
+        group = pitches[i:j]
+        target = centre if prev_median is None else prev_median
+        best_shift, best_cost = 0, None
+        for shift in range(-48, 49, 12):
+            moved = [p + shift for p in group]
+            cost = sum(1 for p in moved if p < lo or p > hi) * 100 + abs(sorted(moved)[len(moved) // 2] - target)
+            if best_cost is None or cost < best_cost:
+                best_shift, best_cost = shift, cost
+        fitted = []
+        for p in group:
+            p += best_shift
+            while p < lo:
+                p += 12
+            while p > hi:
+                p -= 12
+            fitted.append(p)
+        out[i:j] = fitted
+        prev_median = sorted(fitted)[len(fitted) // 2]
+        i = j
+    return out
+
+
 # ---- voicings -------------------------------------------------------------
 
 def _degrees(quality):
