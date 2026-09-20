@@ -12,16 +12,16 @@ pytest-report.xml
 # Pipeline data - generated per-run or user-supplied, not source
 input/*
 !input/.gitkeep
-stems/
-analysis/
-midi/
-render/
-mix/
+/stems/
+/analysis/
+/midi/
+/render/
+/mix/
 reference/*
 !reference/.gitkeep
 
 # Large third-party binaries - documented in README, not vendored
-tools/
+/tools/
 soundfonts/*
 !soundfonts/.gitkeep
 
@@ -36,13 +36,13 @@ vst.json
 data/*.db
 data/JazzStandards.json
 run.log
-output/
+/output/
 
 # per-run logs
 run*.log
-work/
+/work/
 bench_*
 *.bak
-data/jtd/
-memory/
-logs/
+/data/jtd/
+/memory/
+/logs/
